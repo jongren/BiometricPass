@@ -1,0 +1,55 @@
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
+
+# Files for the ART/Dalvik VM
+*.dex
+
+# Java class files
+*.class
+
+# Generated files
+bin/
+gen/
+out/
+release/
+
+# Gradle files
+.gradle/
+.kotlin/
+build/
+app/build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Android Studio / IntelliJ
+*.iml
+.idea/
+misc.xml
+deploymentTargetDropDown.xml
+render.experimental.xml
+
+# macOS
+.DS_Store
+
+# Keystore files & signing secrets (keep an OFFLINE backup; never commit)
+app/keystore/
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+keystore.properties
+
+# Local AI workspace rules & store submission materials (not part of open-source repo)
+GEMINI.md
+CLAUDE.md
+AGENTS.md
+.gemini/
+.claude/
+docs/PLAY_STORE_RELEASE_KIT.md
+docs/store-assets/

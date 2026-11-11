@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BiometricPass 隱私權政策 | Privacy Policy</title>
+    <style>
+        :root {
+            --bg: #f6f8fb;
+            --card: #ffffff;
+            --text: #1a2130;
+            --muted: #5a6578;
+            --primary: #1a56db;
+            --primary-soft: #e8f0fe;
+            --border: #e2e8f0;
+            --badge-bg: #e6f4ea;
+            --badge-text: #137333;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0f141d;
+                --card: #18202f;
+                --text: #eef2f8;
+                --muted: #9aa6bc;
+                --primary: #6ea8fe;
+                --primary-soft: #1e3152;
+                --border: #2a354b;
+                --badge-bg: #173826;
+                --badge-text: #81c995;
+            }
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 32px 16px 64px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang TC", "Noto Sans TC", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.75;
+        }
+        .container {
+            max-width: 820px;
+            margin: 0 auto;
+        }
+        .header-card, .section-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 28px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            background: var(--badge-bg);
+            color: var(--badge-text);
+            margin-bottom: 12px;
+        }
+        h1 {
+            margin: 0 0 8px;
+            font-size: 1.75rem;
+            line-height: 1.35;
+        }
+        h2 {
+            margin: 0 0 12px;
+            font-size: 1.2rem;
+            color: var(--primary);
+        }
+        p, li {
+            color: var(--text);
+            margin: 8px 0;
+        }
+        ul {
+            padding-left: 22px;
+            margin: 8px 0 0;
+        }
+        .muted {
+            color: var(--muted);
+            font-size: 0.92rem;
+        }
+        .lang-switch {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 16px;
+        }
+        .lang-btn {
+            border: 1px solid var(--border);
+            background: transparent;
+            color: var(--text);
+            padding: 6px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        .lang-btn.active {
+            background: var(--primary-soft);
+            color: var(--primary);
+            border-color: var(--primary);
+        }
+        code {
+            background: var(--primary-soft);
+            color: var(--primary);
+            padding: 2px 6px;
+            border-radius: 6px;
+            font-size: 0.9em;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
+        a.email-link {
+            color: var(--primary);
+            font-weight: 600;
+            text-decoration: none;
+        }
+        a.email-link:hover {
+            text-decoration: underline;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header-card">
+        <span class="badge">100% Offline • Zero Network Permission</span>
+        <h1>BiometricPass 隱私權政策 / Privacy Policy</h1>
+        <p class="muted">
+            應用程式套件名稱 / Package Name: <code>com.biometricpass.app</code><br />
+            生效與最後更新日期 / Effective &amp; Last Updated: 2026-11-11
+        </p>
+        <div class="lang-switch">
+            <button id="btn-all" class="lang-btn active" onclick="setLang('all')">雙語對照 / Bilingual</button>
+            <button id="btn-zh" class="lang-btn" onclick="setLang('zh')">繁體中文</button>
+            <button id="btn-en" class="lang-btn" onclick="setLang('en')">English</button>
+        </div>
+    </div>
+
+    <!-- Traditional Chinese Section -->
+    <div id="lang-zh">
+        <div class="section-card">
+            <h2>1. 核心承諾：零資料收集、零網路連線</h2>
+            <p>
+                <strong>BiometricPass</strong> 是一款 100% 純離線運作的 Android 生物辨識密碼管理工具。
+                本應用程式在系統清單（<code>AndroidManifest.xml</code>）中<strong>完全未申請、並主動移除所有網路權限</strong>（包含 <code>android.permission.INTERNET</code>、<code>ACCESS_NETWORK_STATE</code> 與 <code>ACCESS_WIFI_STATE</code>）。
+            </p>
+            <ul>
+                <li>我們<strong>沒有</strong>任何雲端伺服器，也<strong>不會</strong>收集、傳輸、上傳、分析或與任何第三方分享您的帳號、密碼、個人資訊或使用行為。</li>
+                <li>本應用程式<strong>不含任何第三方廣告 SDK、追蹤器或數據分析工具</strong>。</li>
+            </ul>
+        </div>
+
+        <div class="section-card">
+            <h2>2. 本機資料儲存與硬體加密保護</h2>
+            <ul>
+                <li>您儲存的所有帳號名稱、網站／App 綁定資訊與加密後的密碼，100% 僅存放於您個人手機內部的應用程式專屬私密儲存空間。</li>
+                <li>密碼欄位採用 <strong>AES-256-GCM 信封加密（Envelope Encryption）</strong>，資料加密金鑰（DEK）由 Android 硬體安全晶片（<code>AndroidKeyStore</code> TEE / StrongBox）保護，僅在您通過系統生物辨識（<code>BiometricPrompt</code> 指紋／臉部）或裝置螢幕鎖定驗證時於記憶體內解密。</li>
+                <li>本應用程式已關閉系統自動雲端備份（<code>android:allowBackup="false"</code>），防止加密資料庫在未經您知情下被自動上傳至雲端。</li>
+            </ul>
+        </div>
+
+        <div class="section-card">
+            <h2>3. 系統權限與服務用途說明</h2>
+            <ul>
+                <li><strong>自動填入服務（<code>BIND_AUTOFILL_SERVICE</code>）</strong>：僅在您主動於 Android 系統設定將 BiometricPass 選為慣用自動填入服務時啟用。系統提供的畫面結構（<code>AssistStructure</code>）僅在手機本機記憶體中即時判斷登入帳號／密碼輸入框及對應的 App 套件名稱（連同開發者簽章雜湊比對）或瀏覽器網域，絕不記錄其他無關輸入內容，亦絕不外傳。</li>
+                <li><strong>生物辨識權限（<code>USE_BIOMETRIC</code>）</strong>：僅用於呼叫 Android 原生系統驗證視窗解鎖硬體金鑰；BiometricPass 無法讀取或存取您的原始指紋／臉部生物特徵資料。</li>
+                <li><strong>相機權限（<code>CAMERA</code>，選用）</strong>：僅在您主動點選「掃描備份解鎖金鑰 QR 碼」或「掃描舊機移轉 QR 碼」時於本機即時辨識條碼，絕不拍照存檔、錄影或存取您的相簿。</li>
+                <li><strong>加密備份與換機移轉</strong>：當您主動匯出加密備份檔（<code>.bpass</code>）或使用離線 QR 碼／Quick Share 換機時，檔案均經 AES-256-GCM 加密並完全由您自行保管。</li>
+            </ul>
+        </div>
+
+        <div class="section-card">
+            <h2>4. 資料控管與刪除方式</h2>
+            <p>
+                您對裝置內的所有資料擁有 100% 完整控制權。您可以隨時在 BiometricPass 內直接編輯或刪除單筆帳密，或透過 Android「設定 → 應用程式 → BiometricPass → 儲存空間 → 清除資料」或直接解除安裝應用程式，即可永久且不可逆地銷毀本機上的所有資料與硬體金鑰。
+            </p>
+        </div>
+
+        <div class="section-card">
+            <h2>5. 聯絡我們</h2>
+            <p>
+                若您對本隱私權政策或應用程式安全性有任何疑問，請透過開發者聯絡信箱與我們聯繫：
+                <a class="email-link" href="mailto:jongren@gmail.com">jongren@gmail.com</a>
+            </p>
+        </div>
+    </div>
+
+    <!-- English Section -->
+    <div id="lang-en">
+        <div class="section-card">
+            <h2>1. Core Commitment: Zero Data Collection &amp; Zero Network Access</h2>
+            <p>
+                <strong>BiometricPass</strong> is a 100% offline biometric password manager for Android.
+                Our app <strong>requests zero network permissions</strong> and explicitly strips <code>android.permission.INTERNET</code>, <code>ACCESS_NETWORK_STATE</code>, and <code>ACCESS_WIFI_STATE</code> in <code>AndroidManifest.xml</code>.
+            </p>
+            <ul>
+                <li>We operate <strong>no servers</strong> and <strong>never collect, transmit, upload, analyze, or share</strong> your usernames, passwords, personal data, or usage telemetry with us or any third party.</li>
+                <li>BiometricPass contains <strong>zero advertising SDKs, analytics trackers, or third-party telemetry libraries</strong>.</li>
+            </ul>
+        </div>
+
+        <div class="section-card">
+            <h2>2. On-Device Storage &amp; Hardware-Backed Encryption</h2>
+            <ul>
+                <li>All saved logins and metadata remain strictly inside your device's private internal app storage.</li>
+                <li>Passwords are encrypted with <strong>256-bit AES-GCM envelope encryption</strong>. Your Data Encryption Key (DEK) is wrapped by a hardware-backed key inside the <code>AndroidKeyStore</code> (TEE / StrongBox) and unlocked exclusively in memory when you authenticate via Android's native <code>BiometricPrompt</code> or device screen lock.</li>
+                <li>Android OS cloud auto-backup is disabled (<code>android:allowBackup="false"</code>) so your vault is never uploaded to cloud storage behind your back.</li>
+            </ul>
+        </div>
+
+        <div class="section-card">
+            <h2>3. Permissions &amp; System Services Explained</h2>
+            <ul>
+                <li><strong>Autofill Service (<code>BIND_AUTOFILL_SERVICE</code>)</strong>: Active only when you explicitly choose BiometricPass as your preferred autofill service in Android Settings. Screen structure data (<code>AssistStructure</code>) is inspected strictly in local memory to detect username/password fields, verify app package names and developer signing certificates, or match website domains—never stored as browsing history and never transmitted anywhere.</li>
+                <li><strong>Biometric Authentication (<code>USE_BIOMETRIC</code>)</strong>: Used solely to invoke the Android OS authentication prompt to unlock your hardware keystore key. BiometricPass never accesses raw fingerprint or facial biometric templates.</li>
+                <li><strong>Camera (<code>CAMERA</code>, Optional)</strong>: Used strictly on-device when you choose to scan an offline Backup Key QR code or Device-to-Device Migration QR code. No photos or videos are saved or transmitted.</li>
+                <li><strong>Encrypted Backups &amp; Device Migration</strong>: Any <code>.bpass</code> backup file or migration QR code you choose to create is encrypted locally using AES-256-GCM and remains completely under your control.</li>
+            </ul>
+        </div>
+
+        <div class="section-card">
+            <h2>4. Data Control &amp; Deletion</h2>
+            <p>
+                Because all data resides exclusively on your device, you have complete control at all times. You may edit or delete individual logins inside the app, clear app storage in Android Settings, or uninstall BiometricPass to permanently erase all local vault data and hardware keys.
+            </p>
+        </div>
+
+        <div class="section-card">
+            <h2>5. Contact Us</h2>
+            <p>
+                If you have any questions about this Privacy Policy, please contact us at:
+                <a class="email-link" href="mailto:jongren@gmail.com">jongren@gmail.com</a>
+            </p>
+        </div>
+    </div>
+</div>
+
+<script>
+    function setLang(mode) {
+        document.getElementById('lang-zh').classList.toggle('hidden', mode === 'en');
+        document.getElementById('lang-en').classList.toggle('hidden', mode === 'zh');
+        document.getElementById('btn-all').classList.toggle('active', mode === 'all');
+        document.getElementById('btn-zh').classList.toggle('active', mode === 'zh');
+        document.getElementById('btn-en').classList.toggle('active', mode === 'en');
+    }
+</script>
+</body>
+</html>
