@@ -4,9 +4,12 @@ import com.biometricpass.app.autofill.AssistStructureParser
 import com.biometricpass.app.crypto.VaultCipher
 import com.biometricpass.app.data.local.CredentialDao
 import com.biometricpass.app.data.local.CredentialEntity
+import com.biometricpass.app.data.model.ExtraField
+import com.biometricpass.app.data.model.ExtraFieldsCodec
 import com.biometricpass.app.util.AppSignatureVerifier
 import com.biometricpass.app.util.AppSignatures
 import com.biometricpass.app.util.CsvPasswordParser
+import com.biometricpass.app.util.MaskedIdentifierHelper
 import com.biometricpass.app.util.PasswordHealthAnalyzer
 import com.biometricpass.app.util.PublicSuffixList
 import com.biometricpass.app.util.WebDomainMatcher
@@ -72,11 +75,23 @@ class CredentialRepository(
             val rawList = findCandidates(queryPkg, queryDomain).filter { cred ->
                 queryPkg.isBlank() || AppSignatureVerifier.matchesPinnedSignature(cred.appSignatureSha256, liveSignatures)
             }
-            // Deduplicate by normalized username (and if a non-blank username exists, drop blank-username duplicates for the same package)
-            val hasNonBlankUser = rawList.any { it.username.isNotBlank() }
+            // Keep distinct accounts AND distinct blank-username secondary secrets (e.g. "三星錢包 - PIN 碼").
+            // Only drop an untitled/duplicate blank-username leftover when an account with the exact same
+            // normalized title and a non-blank username already exists.
+            val titledAccounts = rawList
+                .filter { it.username.isNotBlank() }
+                .map { it.title.trim().lowercase() }
+                .toSet()
             rawList
-                .filter { !hasNonBlankUser || it.username.isNotBlank() }
-                .distinctBy { "${it.packageName}|${it.webDomain}|${it.username.lowercase()}" }
+                .filter { cred ->
+                    cred.username.isNotBlank() ||
+                        CredentialMatchRules.isSecondarySecretTitle(cred.title) ||
+                        cred.hasExtraFields ||
+                        cred.title.trim().lowercase() !in titledAccounts
+                }
+                .distinctBy {
+                    CredentialMatchRules.importKey(it.packageName, it.webDomain, it.username, it.title)
+                }
         }
     }
 
@@ -134,18 +149,31 @@ class CredentialRepository(
     }
 
     /**
+     * Public IO accessor returning trusted existing credentials for the same App or website.
+     * Used during Autofill Save to resolve masked usernames (e.g. `A123***789`) and to offer
+     * appending a newly captured PIN / User ID into an existing credential's encrypted extra fields.
+     */
+    suspend fun findSiteCredentialsForSave(
+        packageName: String,
+        webDomain: String
+    ): List<CredentialEntity> = withContext(Dispatchers.IO) {
+        findSiteMatches(packageName, webDomain)
+    }
+
+    /**
      * Finds the credential that saving [username] for (packageName, webDomain) would update.
-     * Returns `null` if a NEW record will be created. See [CredentialMatchRules.pickExistingForSave]:
-     * a different username for the same App / website never overwrites another account.
+     * Returns `null` if a NEW record will be created.
      */
     suspend fun findExistingCredential(
         packageName: String,
         webDomain: String,
-        username: String
+        username: String,
+        proposedTitle: String = ""
     ): CredentialEntity? = withContext(Dispatchers.IO) {
         CredentialMatchRules.pickExistingForSave(
             siteMatches = findSiteMatches(packageName, webDomain),
-            username = username
+            username = username,
+            proposedTitle = proposedTitle
         )
     }
 
@@ -155,10 +183,12 @@ class CredentialRepository(
     )
 
     /**
-     * Encrypts [plainPassword] with [dek] and inserts or updates the credential in Room.
+     * Encrypts [plainPassword] (and optional [extraFields]) with [dek] and inserts or updates the
+     * credential in Room.
+     * - [forceCreateNew] == true: always inserts a brand-new record without touching existing accounts.
      * - [id] > 0: explicitly edits that record (from the vault editor).
-     * - [id] == 0: updates the same account if it exists, otherwise inserts a new record.
-     * Returns [SaveOrUpdateResult] indicating whether an existing record was updated or a new one was created.
+     * - [id] == 0: updates the same account if it unambiguously matches, otherwise inserts a new record.
+     * - [extraFields] == null: preserves any existing encrypted extra fields on update.
      */
     suspend fun saveOrUpdateCredential(
         id: Long = 0L,
@@ -168,7 +198,9 @@ class CredentialRepository(
         username: String,
         plainPassword: String,
         dek: SecretKey,
-        defaultUntitledTitle: String = "Untitled"
+        defaultUntitledTitle: String = "Untitled",
+        forceCreateNew: Boolean = false,
+        extraFields: List<ExtraField>? = null
     ): SaveOrUpdateResult = withContext(Dispatchers.IO) {
         val encrypted = cryptoManager.encryptWithDek(plainPassword, dek)
         val cleanPkg = packageName.trim()
@@ -176,17 +208,31 @@ class CredentialRepository(
         val cleanUser = username.trim()
         val now = System.currentTimeMillis()
 
-        val existing: CredentialEntity? = if (id > 0L) {
-            credentialDao.getById(id)
-        } else {
-            CredentialMatchRules.pickExistingForSave(findSiteMatches(cleanPkg, cleanDomain), cleanUser)
+        val existing: CredentialEntity? = when {
+            forceCreateNew -> null
+            id > 0L -> credentialDao.getById(id)
+            else -> CredentialMatchRules.pickExistingForSave(
+                siteMatches = findSiteMatches(cleanPkg, cleanDomain),
+                username = cleanUser,
+                proposedTitle = title
+            )
         }
 
         val finalTitle = title.trim().ifBlank {
             existing?.title?.ifBlank { null }
                 ?: cleanDomain.ifBlank { cleanPkg.ifBlank { defaultUntitledTitle } }
         }
-        val finalUsername = cleanUser.ifBlank { existing?.username.orEmpty() }
+
+        // Never overwrite a clean unmasked username in the vault with a masked version (e.g. "A123***789").
+        val finalUsername = when {
+            cleanUser.isBlank() -> existing?.username.orEmpty()
+            existing != null &&
+                existing.username.isNotBlank() &&
+                !MaskedIdentifierHelper.isMaskedIdentifier(existing.username) &&
+                MaskedIdentifierHelper.isMaskedIdentifier(cleanUser) &&
+                MaskedIdentifierHelper.matchesUnmasked(cleanUser, existing.username) -> existing.username
+            else -> cleanUser
+        }
 
         val finalPkg = cleanPkg.ifBlank { existing?.packageName.orEmpty() }
         val finalAppSig = if (finalPkg.isNotBlank() && !AssistStructureParser.isBrowserPackage(finalPkg)) {
@@ -195,6 +241,12 @@ class CredentialRepository(
         } else {
             ""
         }
+
+        val (encExtra, encExtraIv) = encryptExtraFieldsOrPreserve(
+            extraFields = extraFields,
+            existing = existing,
+            dek = dek
+        )
 
         val entity = CredentialEntity(
             id = existing?.id ?: 0L,
@@ -205,7 +257,9 @@ class CredentialRepository(
             encryptedPassword = encrypted.ciphertextBase64,
             iv = encrypted.ivBase64,
             updatedAt = now,
-            appSignatureSha256 = finalAppSig
+            appSignatureSha256 = finalAppSig,
+            encryptedExtraFields = encExtra,
+            extraFieldsIv = encExtraIv
         )
 
         var savedId = 0L
@@ -216,13 +270,63 @@ class CredentialRepository(
             } else {
                 credentialDao.insert(entity)
             }
-            // Only remove TRUE duplicates (same site + same non-blank username). Other accounts are never touched.
-            val siteMatches = findSiteMatches(entity.packageName, entity.webDomain)
-            CredentialMatchRules.duplicateIdsToRemove(siteMatches, entity.copy(id = savedId))
-                .forEach { credentialDao.deleteById(it) }
+            if (!forceCreateNew) {
+                // Only remove TRUE duplicates (same site + same non-blank unmasked username).
+                val siteMatches = findSiteMatches(entity.packageName, entity.webDomain)
+                CredentialMatchRules.duplicateIdsToRemove(siteMatches, entity.copy(id = savedId))
+                    .forEach { credentialDao.deleteById(it) }
+            }
         }
 
         SaveOrUpdateResult(id = savedId, isUpdate = existing != null)
+    }
+
+    /**
+     * Appends or updates an encrypted [ExtraField] (such as a newly set Wallet PIN or Bank User ID)
+     * inside an existing credential WITHOUT modifying its `username` or primary `encryptedPassword`.
+     */
+    suspend fun appendExtraFieldToCredential(
+        credentialId: Long,
+        extraField: ExtraField,
+        dek: SecretKey
+    ): CredentialEntity? = withContext(Dispatchers.IO) {
+        var updatedEntity: CredentialEntity? = null
+        runInTransaction {
+            val existing = credentialDao.getById(credentialId) ?: return@runInTransaction
+            val currentExtras = decryptExtraFields(existing, dek)
+            val merged = ExtraFieldsCodec.mergeFields(currentExtras, listOf(extraField))
+            val extraJson = ExtraFieldsCodec.encodeToJson(merged)
+            val (encExtra, encIv) = if (extraJson.isNotEmpty()) {
+                val enc = cryptoManager.encryptWithDek(extraJson, dek)
+                enc.ciphertextBase64 to enc.ivBase64
+            } else {
+                "" to ""
+            }
+            val next = existing.copy(
+                encryptedExtraFields = encExtra,
+                extraFieldsIv = encIv,
+                updatedAt = System.currentTimeMillis()
+            )
+            credentialDao.update(next)
+            updatedEntity = next
+        }
+        updatedEntity
+    }
+
+    private fun encryptExtraFieldsOrPreserve(
+        extraFields: List<ExtraField>?,
+        existing: CredentialEntity?,
+        dek: SecretKey
+    ): Pair<String, String> {
+        if (extraFields == null) {
+            return (existing?.encryptedExtraFields.orEmpty()) to (existing?.extraFieldsIv.orEmpty())
+        }
+        val extraJson = ExtraFieldsCodec.encodeToJson(extraFields)
+        if (extraJson.isEmpty()) {
+            return "" to ""
+        }
+        val enc = cryptoManager.encryptWithDek(extraJson, dek)
+        return enc.ciphertextBase64 to enc.ivBase64
     }
 
     /**
@@ -234,6 +338,19 @@ class CredentialRepository(
             ivBase64 = entity.iv,
             dek = dek
         )
+    }
+
+    /**
+     * Decrypts a stored [CredentialEntity]'s optional [ExtraField] list using the unlocked [dek].
+     */
+    fun decryptExtraFields(entity: CredentialEntity, dek: SecretKey): List<ExtraField> {
+        if (!entity.hasExtraFields) return emptyList()
+        val json = cryptoManager.decryptWithDek(
+            ciphertextBase64 = entity.encryptedExtraFields,
+            ivBase64 = entity.extraFieldsIv,
+            dek = dek
+        )
+        return ExtraFieldsCodec.decodeFromJson(json)
     }
 
     /**
@@ -260,9 +377,9 @@ class CredentialRepository(
     }
 
     /**
-     * Re-encrypts every stored password from [oldDek] to [newDek] in ONE database transaction
-     * (all-or-nothing). Throws (and rolls back) if any record cannot be decrypted with [oldDek],
-     * so a rotation can never leave the vault half old / half new. Returns the number of records.
+     * Re-encrypts every stored password AND encrypted extra-fields payload from [oldDek] to [newDek]
+     * in ONE database transaction (all-or-nothing). Throws (and rolls back) if any record cannot be
+     * decrypted with [oldDek], so a rotation can never leave the vault half old / half new.
      */
     suspend fun reencryptAllCredentials(oldDek: SecretKey, newDek: SecretKey): Int =
         withContext(Dispatchers.IO) {
@@ -271,8 +388,24 @@ class CredentialRepository(
                 for (item in credentialDao.getAll()) {
                     val plain = decryptPassword(item, oldDek)
                     val encrypted = cryptoManager.encryptWithDek(plain, newDek)
+                    val (newExtraCipher, newExtraIv) = if (item.hasExtraFields) {
+                        val plainExtraJson = cryptoManager.decryptWithDek(
+                            ciphertextBase64 = item.encryptedExtraFields,
+                            ivBase64 = item.extraFieldsIv,
+                            dek = oldDek
+                        )
+                        val reencExtra = cryptoManager.encryptWithDek(plainExtraJson, newDek)
+                        reencExtra.ciphertextBase64 to reencExtra.ivBase64
+                    } else {
+                        "" to ""
+                    }
                     credentialDao.update(
-                        item.copy(encryptedPassword = encrypted.ciphertextBase64, iv = encrypted.ivBase64)
+                        item.copy(
+                            encryptedPassword = encrypted.ciphertextBase64,
+                            iv = encrypted.ivBase64,
+                            encryptedExtraFields = newExtraCipher,
+                            extraFieldsIv = newExtraIv
+                        )
                     )
                     count++
                 }
@@ -405,6 +538,7 @@ class CredentialRepository(
         val array = JSONArray()
         for (item in all) {
             val plainPassword = decryptPassword(item, dek)
+            val extraFields = decryptExtraFields(item, dek)
             val obj = JSONObject().apply {
                 put("title", item.title)
                 put("packageName", item.packageName)
@@ -415,11 +549,14 @@ class CredentialRepository(
                 if (item.appSignatureSha256.isNotBlank()) {
                     put("appSignatureSha256", item.appSignatureSha256)
                 }
+                if (extraFields.isNotEmpty()) {
+                    put("extraFields", ExtraFieldsCodec.toJsonArray(extraFields))
+                }
             }
             array.put(obj)
         }
         return JSONObject().apply {
-            put("version", 1)
+            put("version", 2)
             put("count", array.length())
             put("items", array)
         }.toString()
@@ -427,7 +564,7 @@ class CredentialRepository(
 
     /**
      * Strict merge for backup import / device migration:
-     * - Identity = (packageName, webDomain, username) exact match (case-insensitive domain/username).
+     * - Identity = (packageName, webDomain, username) exact match (disambiguated by title when username is blank).
      * - Same identity: keep whichever copy is newer (by updatedAt).
      * - Different identity: always inserted as a new record. Nothing is ever deleted.
      */
@@ -444,7 +581,9 @@ class CredentialRepository(
 
         runInTransaction {
             val existingByKey = credentialDao.getAll()
-                .associateBy { CredentialMatchRules.importKey(it.packageName, it.webDomain, it.username) }
+                .associateBy {
+                    CredentialMatchRules.importKey(it.packageName, it.webDomain, it.username, it.title)
+                }
                 .toMutableMap()
 
             for (i in 0 until items.length()) {
@@ -458,7 +597,7 @@ class CredentialRepository(
                     .ifBlank { webDomain.ifBlank { packageName.ifBlank { defaultUntitledTitle } } }
                 val updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
 
-                val key = CredentialMatchRules.importKey(packageName, webDomain, username)
+                val key = CredentialMatchRules.importKey(packageName, webDomain, username, title)
                 val existing = existingByKey[key]
                 if (existing != null && existing.updatedAt >= updatedAt) {
                     skipped++
@@ -475,6 +614,13 @@ class CredentialRepository(
                     ""
                 }
 
+                val importedExtras = ExtraFieldsCodec.decodeFromJsonArray(obj.optJSONArray("extraFields"))
+                val (encExtra, encExtraIv) = encryptExtraFieldsOrPreserve(
+                    extraFields = if (obj.has("extraFields")) importedExtras else null,
+                    existing = existing,
+                    dek = dek
+                )
+
                 val encrypted = cryptoManager.encryptWithDek(password, dek)
                 val entity = CredentialEntity(
                     id = existing?.id ?: 0L,
@@ -485,7 +631,9 @@ class CredentialRepository(
                     encryptedPassword = encrypted.ciphertextBase64,
                     iv = encrypted.ivBase64,
                     updatedAt = updatedAt,
-                    appSignatureSha256 = resolvedSig
+                    appSignatureSha256 = resolvedSig,
+                    encryptedExtraFields = encExtra,
+                    extraFieldsIv = encExtraIv
                 )
                 if (existing != null) {
                     credentialDao.update(entity)

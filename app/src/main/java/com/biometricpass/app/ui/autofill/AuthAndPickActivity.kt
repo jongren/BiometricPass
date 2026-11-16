@@ -12,6 +12,7 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.biometricpass.app.BiometricPassApp
 import com.biometricpass.app.BuildConfig
@@ -19,6 +20,7 @@ import com.biometricpass.app.R
 import com.biometricpass.app.autofill.AutofillDatasetFactory
 import com.biometricpass.app.autofill.AutofillTargetRequest
 import com.biometricpass.app.crypto.BiometricAuthHelper
+import com.biometricpass.app.crypto.InMemorySecretRelay
 import com.biometricpass.app.data.local.CredentialEntity
 import com.biometricpass.app.ui.generate.GenerateAndSaveActivity
 import com.biometricpass.app.ui.theme.BiometricPassTheme
@@ -41,6 +43,7 @@ class AuthAndPickActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         if (!BuildConfig.DEBUG) {
             window.setFlags(
                 WindowManager.LayoutParams.FLAG_SECURE,
@@ -117,8 +120,12 @@ class AuthAndPickActivity : AppCompatActivity() {
                     onSearchQueryChange = pickerViewModel::onSearchQueryChange,
                     onRequestUnlock = { promptPickerUnlock(app) },
                     onOpenGenerator = { openGeneratorAndFinish(target) },
+                    onDecryptExtraFields = pickerViewModel::decryptExtraFields,
                     onAutoFillCredential = { entity, dek ->
                         deliverCredentialAndFinish(entity, dek, target)
+                    },
+                    onFillSingleField = { value, fieldLabel ->
+                        deliverSingleFieldAndFinish(value, fieldLabel, target)
                     },
                     onCopyPassword = { entity, dek -> copyPasswordOnly(entity, dek) },
                     onDismiss = {
@@ -182,6 +189,64 @@ class AuthAndPickActivity : AppCompatActivity() {
         }
     }
 
+    private fun deliverSingleFieldAndFinish(
+        value: String,
+        fieldLabel: String,
+        target: AutofillTargetRequest
+    ) {
+        if (value.isBlank()) return
+        InMemorySecretRelay.recordRecentUnmaskedInputs(
+            packageName = target.targetPackage,
+            webDomain = target.targetWebDomain,
+            values = listOf(value)
+        )
+
+        val singleFillIntent = AutofillDatasetFactory.buildSingleFieldFillResultIntent(
+            context = this,
+            target = target,
+            value = value,
+            fieldLabel = fieldLabel
+        )
+        if (singleFillIntent != null) {
+            Toast.makeText(
+                this,
+                getString(R.string.toast_filled_single_field, fieldLabel),
+                Toast.LENGTH_SHORT
+            ).show()
+            setResult(Activity.RESULT_OK, singleFillIntent)
+            finish()
+            return
+        }
+
+        if (target.canReplaceProcessText) {
+            Toast.makeText(
+                this,
+                getString(R.string.toast_filled_single_field, fieldLabel),
+                Toast.LENGTH_SHORT
+            ).show()
+            setResult(
+                Activity.RESULT_OK,
+                Intent().putExtra(Intent.EXTRA_PROCESS_TEXT, value)
+            )
+            finish()
+            return
+        }
+
+        SensitiveClipboardHelper.copySensitive(
+            context = this,
+            label = fieldLabel,
+            secretText = value,
+            showToast = false
+        )
+        Toast.makeText(
+            this,
+            getString(R.string.toast_copied_field_paste, fieldLabel),
+            Toast.LENGTH_SHORT
+        ).show()
+        setResult(Activity.RESULT_OK)
+        finish()
+    }
+
     private fun deliverCredentialAndFinish(
         entity: CredentialEntity,
         dek: SecretKey,
@@ -189,13 +254,26 @@ class AuthAndPickActivity : AppCompatActivity() {
     ) {
         try {
             val plainPassword = pickerViewModel.decryptPassword(entity, dek)
+            val extraFields = pickerViewModel.decryptExtraFields(entity, dek)
+            val unmaskedToCache = buildList {
+                if (entity.username.isNotBlank()) add(entity.username)
+                for (ef in extraFields) if (ef.value.isNotBlank()) add(ef.value)
+            }
+            if (unmaskedToCache.isNotEmpty()) {
+                InMemorySecretRelay.recordRecentUnmaskedInputs(
+                    packageName = target.targetPackage.ifBlank { entity.packageName },
+                    webDomain = target.targetWebDomain.ifBlank { entity.webDomain },
+                    values = unmaskedToCache
+                )
+            }
 
             // 1. Autofill direct dataset delivery (no clipboard touch)
             val autofillResultIntent = AutofillDatasetFactory.buildCredentialFillResultIntent(
                 context = this,
                 target = target,
                 entity = entity,
-                plainPassword = plainPassword
+                plainPassword = plainPassword,
+                extraFields = extraFields
             )
             if (autofillResultIntent != null) {
                 Toast.makeText(
@@ -256,6 +334,7 @@ class AuthAndPickActivity : AppCompatActivity() {
             targetPackage: String = "",
             targetWebDomain: String = "",
             usernameAutofillId: AutofillId? = null,
+            secondaryUsernameAutofillId: AutofillId? = null,
             passwordAutofillId: AutofillId? = null,
             focusedAutofillId: AutofillId? = null,
             allEditableAutofillIds: ArrayList<AutofillId>? = null,
@@ -270,6 +349,7 @@ class AuthAndPickActivity : AppCompatActivity() {
                     targetPackage = targetPackage,
                     targetWebDomain = targetWebDomain,
                     usernameAutofillId = usernameAutofillId,
+                    secondaryUsernameAutofillId = secondaryUsernameAutofillId,
                     passwordAutofillId = passwordAutofillId,
                     focusedAutofillId = focusedAutofillId,
                     allEditableAutofillIds = allEditableAutofillIds.orEmpty(),

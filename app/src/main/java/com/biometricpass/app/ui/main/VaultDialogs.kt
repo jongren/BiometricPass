@@ -76,8 +76,16 @@ internal fun TransferCodeInputDialog(
     var code by remember { mutableStateOf("") }
     val isComplete = TransferCode.isComplete(code)
 
+    val nonDismissDialogProps = remember {
+        androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = nonDismissDialogProps,
         title = { Text(stringResource(R.string.transfer_code_dialog_title)) },
         text = {
             Column {
@@ -169,8 +177,16 @@ internal fun BackupKeyProtectionDialog(
     val trimmed = passphrase.trim()
     val isTooShort = trimmed.isNotEmpty() && trimmed.length < MIN_BACKUP_PASSPHRASE_LENGTH
 
+    val nonDismissDialogProps = remember {
+        androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = nonDismissDialogProps,
         icon = { Icon(Icons.Default.Key, contentDescription = null) },
         title = { Text(stringResource(R.string.backup_key_dialog_title)) },
         text = {
@@ -338,8 +354,16 @@ internal fun RecoveryPassphraseInputDialog(
     var showPassphrase by remember { mutableStateOf(false) }
     val valid = passphrase.trim().isNotEmpty()
 
+    val nonDismissDialogProps = remember {
+        androidx.compose.ui.window.DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    }
+
     AlertDialog(
         onDismissRequest = { if (!isWorking) onDismiss() },
+        properties = nonDismissDialogProps,
         icon = { Icon(Icons.Default.Key, contentDescription = null) },
         title = { Text(stringResource(R.string.recovery_passphrase_dialog_title)) },
         text = {

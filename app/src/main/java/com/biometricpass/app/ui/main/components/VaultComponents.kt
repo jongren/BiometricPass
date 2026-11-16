@@ -39,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.biometricpass.app.R
 import com.biometricpass.app.data.local.CredentialEntity
+import com.biometricpass.app.data.model.ExtraField
 import com.biometricpass.app.ui.icons.ContentCopy
 import com.biometricpass.app.ui.icons.Key
 import com.biometricpass.app.ui.icons.Shield
@@ -226,9 +228,13 @@ fun BackupKeyReminderBanner(
 fun CredentialCardItem(
     item: CredentialEntity,
     revealedPassword: String?,
+    extraFields: List<ExtraField>,
     onToggleRevealPassword: () -> Unit,
+    onLoadExtraFields: () -> Unit,
+    onClearExtraFields: () -> Unit,
     onCopyUsername: () -> Unit,
     onCopyPassword: () -> Unit,
+    onCopyExtraField: (String, String) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -238,9 +244,20 @@ fun CredentialCardItem(
     }
     var isExpanded by rememberSaveable(item.id) { mutableStateOf(false) }
 
+    LaunchedEffect(isExpanded, item.id, item.encryptedExtraFields) {
+        if (isExpanded && item.hasExtraFields) {
+            onLoadExtraFields()
+        } else if (!isExpanded) {
+            onClearExtraFields()
+        }
+    }
+
     fun toggleExpanded() {
-        if (isExpanded && revealedPassword != null) {
-            onToggleRevealPassword()
+        if (isExpanded) {
+            if (revealedPassword != null) {
+                onToggleRevealPassword()
+            }
+            onClearExtraFields()
         }
         isExpanded = !isExpanded
     }
@@ -294,11 +311,16 @@ fun CredentialCardItem(
                         if (item.packageName.isBlank()) null
                         else InstalledAppHelper.getAppLabel(context, item.packageName)
                     }
+                    val extraBadge = stringResource(R.string.card_extra_fields_badge)
                     val subtitle = buildString {
                         if (item.packageName.isNotBlank()) append(appLabel ?: item.packageName)
                         if (item.webDomain.isNotBlank()) {
                             if (isNotEmpty()) append(" • ")
                             append(item.webDomain)
+                        }
+                        if (item.hasExtraFields) {
+                            if (isNotEmpty()) append(" • ")
+                            append(extraBadge)
                         }
                     }
                     if (subtitle.isNotBlank()) {
@@ -421,6 +443,60 @@ fun CredentialCardItem(
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
                                 Text(stringResource(R.string.action_copy_password))
+                            }
+                        }
+                    }
+
+                    // Encrypted Extra Fields (e.g. Bank User ID, Wallet PIN, Transaction Password)
+                    extraFields.forEachIndexed { idx, extra ->
+                        var revealedExtra by remember(item.id, idx) { mutableStateOf(!extra.isSecret) }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = extra.label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = if (revealedExtra) extra.value else "••••••••••••",
+                                    style = MaterialTheme.typography.bodyMedium.copy(
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (revealedExtra && extra.isSecret) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (extra.isSecret) {
+                                    IconButton(onClick = { revealedExtra = !revealedExtra }) {
+                                        Icon(
+                                            imageVector = if (revealedExtra) {
+                                                Icons.Default.VisibilityOff
+                                            } else {
+                                                Icons.Default.Visibility
+                                            },
+                                            contentDescription = stringResource(R.string.toggle_password_visibility_desc)
+                                        )
+                                    }
+                                }
+                                TextButton(onClick = { onCopyExtraField(extra.label, extra.value) }) {
+                                    Icon(
+                                        Icons.Default.ContentCopy,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(stringResource(R.string.action_copy_password))
+                                }
                             }
                         }
                     }

@@ -15,12 +15,17 @@ object AssistStructureParser {
         val packageName: String,
         val webDomain: String,
         val usernameId: AutofillId?,
+        val secondaryUsernameId: AutofillId? = null,
+        val secondaryUsernameLabel: String = "",
         val passwordId: AutofillId?,
         val allPasswordIds: List<AutofillId>,
         val focusedInputId: AutofillId?,
         val allEditableIds: List<AutofillId>,
         val usernameText: String,
-        val passwordText: String
+        val secondaryUsernameText: String = "",
+        val passwordText: String,
+        val capturedFields: List<CapturedFormField> = emptyList(),
+        val isNumericPasswordFocus: Boolean = false
     ) {
         val hasPasswordField: Boolean
             get() = passwordId != null
@@ -73,12 +78,17 @@ object AssistStructureParser {
             packageName = analysis.packageName,
             webDomain = analysis.webDomain,
             usernameId = analysis.usernameNode.autofillId(),
+            secondaryUsernameId = analysis.secondaryUsernameNode.autofillId(),
+            secondaryUsernameLabel = analysis.secondaryUsernameLabel,
             passwordId = analysis.passwordNode.autofillId(),
             allPasswordIds = analysis.passwordNodes.distinctAutofillIds(),
             focusedInputId = analysis.focusedNode.autofillId(),
             allEditableIds = analysis.editableNodes.distinctAutofillIds(),
             usernameText = analysis.usernameText,
-            passwordText = analysis.passwordText
+            secondaryUsernameText = analysis.secondaryUsernameText,
+            passwordText = analysis.passwordText,
+            capturedFields = analysis.capturedFields,
+            isNumericPasswordFocus = analysis.isNumericPasswordFocus
         )
     }
 

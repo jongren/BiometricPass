@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,18 +24,16 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,20 +43,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.biometricpass.app.R
 import com.biometricpass.app.data.local.CredentialEntity
+import com.biometricpass.app.data.model.ExtraField
+import com.biometricpass.app.ui.components.AnchoredBottomSheetContainer
 import com.biometricpass.app.ui.icons.AutoAwesome
 import com.biometricpass.app.ui.icons.ContentCopy
 import com.biometricpass.app.ui.icons.Fingerprint
 import com.biometricpass.app.ui.icons.Key
+import com.biometricpass.app.ui.icons.Visibility
+import com.biometricpass.app.ui.icons.VisibilityOff
 import com.biometricpass.app.util.InstalledAppHelper
 import com.biometricpass.app.util.SensitiveClipboardHelper
 import javax.crypto.SecretKey
 
-@OptIn(ExperimentalMaterial3Api::class)
+private data class PendingSingleFill(
+    val item: CredentialEntity,
+    val value: String,
+    val label: String
+)
+
 @Composable
 internal fun PickerBottomSheetContent(
     uiState: PickerUiState,
@@ -68,14 +76,16 @@ internal fun PickerBottomSheetContent(
     onSearchQueryChange: (String) -> Unit,
     onRequestUnlock: () -> Unit,
     onOpenGenerator: () -> Unit,
+    onDecryptExtraFields: (CredentialEntity, SecretKey) -> List<ExtraField>,
     onAutoFillCredential: (CredentialEntity, SecretKey) -> Unit,
+    onFillSingleField: (String, String) -> Unit,
     onCopyPassword: (CredentialEntity, SecretKey) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var pendingSignatureMismatchItem by remember { mutableStateOf<CredentialEntity?>(null) }
     var pendingWebViewConfirmItem by remember { mutableStateOf<CredentialEntity?>(null) }
     var pendingUnlinkedConfirmItem by remember { mutableStateOf<CredentialEntity?>(null) }
+    var pendingSingleFillAction by remember { mutableStateOf<PendingSingleFill?>(null) }
 
     pendingSignatureMismatchItem?.let { item ->
         if (unlockedDek != null) {
@@ -88,10 +98,19 @@ internal fun PickerBottomSheetContent(
                     item.title
                 ),
                 onConfirm = {
+                    val single = pendingSingleFillAction
                     pendingSignatureMismatchItem = null
-                    onAutoFillCredential(item, unlockedDek)
+                    pendingSingleFillAction = null
+                    if (single != null) {
+                        onFillSingleField(single.value, single.label)
+                    } else {
+                        onAutoFillCredential(item, unlockedDek)
+                    }
                 },
-                onDismiss = { pendingSignatureMismatchItem = null }
+                onDismiss = {
+                    pendingSignatureMismatchItem = null
+                    pendingSingleFillAction = null
+                }
             )
         }
     }
@@ -106,10 +125,19 @@ internal fun PickerBottomSheetContent(
                     item.title
                 ),
                 onConfirm = {
+                    val single = pendingSingleFillAction
                     pendingWebViewConfirmItem = null
-                    onAutoFillCredential(item, unlockedDek)
+                    pendingSingleFillAction = null
+                    if (single != null) {
+                        onFillSingleField(single.value, single.label)
+                    } else {
+                        onAutoFillCredential(item, unlockedDek)
+                    }
                 },
-                onDismiss = { pendingWebViewConfirmItem = null }
+                onDismiss = {
+                    pendingWebViewConfirmItem = null
+                    pendingSingleFillAction = null
+                }
             )
         }
     }
@@ -125,25 +153,46 @@ internal fun PickerBottomSheetContent(
                 title = stringResource(R.string.process_text_confirm_title),
                 body = stringResource(R.string.process_text_confirm_body, receiverLabel, item.title),
                 onConfirm = {
+                    val single = pendingSingleFillAction
                     pendingUnlinkedConfirmItem = null
-                    onAutoFillCredential(item, unlockedDek)
+                    pendingSingleFillAction = null
+                    if (single != null) {
+                        onFillSingleField(single.value, single.label)
+                    } else {
+                        onAutoFillCredential(item, unlockedDek)
+                    }
                 },
-                onDismiss = { pendingUnlinkedConfirmItem = null }
+                onDismiss = {
+                    pendingUnlinkedConfirmItem = null
+                    pendingSingleFillAction = null
+                }
             )
         }
     }
 
-    ModalBottomSheet(
+    fun dispatchSingleField(item: CredentialEntity, isSuggested: Boolean, value: String, label: String) {
+        if (item.id in uiState.signatureMismatchItemIds) {
+            pendingSingleFillAction = PendingSingleFill(item, value, label)
+            pendingSignatureMismatchItem = item
+        } else if (uiState.isNonBrowserWebView && item.packageName != uiState.targetPackage) {
+            pendingSingleFillAction = PendingSingleFill(item, value, label)
+            pendingWebViewConfirmItem = item
+        } else if (!isSuggested && confirmUnlinkedCredential) {
+            pendingSingleFillAction = PendingSingleFill(item, value, label)
+            pendingUnlinkedConfirmItem = item
+        } else {
+            onFillSingleField(value, label)
+        }
+    }
+
+    AnchoredBottomSheetContainer(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        dismissOnOutsideClick = true
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .navigationBarsPadding()
                 .padding(bottom = 24.dp)
         ) {
             Row(
@@ -299,7 +348,7 @@ internal fun PickerBottomSheetContent(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp),
+                            .heightIn(min = 100.dp, max = 180.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -313,7 +362,8 @@ internal fun PickerBottomSheetContent(
                     LazyColumn(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(340.dp),
+                            .weight(1f, fill = false)
+                            .heightIn(max = 340.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         if (hasSuggestedSection) {
@@ -321,8 +371,12 @@ internal fun PickerBottomSheetContent(
                                 PickerSectionHeader(stringResource(R.string.picker_section_suggested))
                             }
                             items(uiState.suggestedItems, key = { it.id }) { item ->
+                                val extraFields = remember(item.id, item.encryptedExtraFields, unlockedDek) {
+                                    onDecryptExtraFields(item, unlockedDek)
+                                }
                                 PickerCredentialCard(
                                     item = item,
+                                    extraFields = extraFields,
                                     isMatchedTarget = true,
                                     canDirectFill = canDirectFill,
                                     onCardClick = {
@@ -331,6 +385,19 @@ internal fun PickerBottomSheetContent(
                                         } else {
                                             onAutoFillCredential(item, unlockedDek)
                                         }
+                                    },
+                                    onFillUsernameOnly = {
+                                        if (item.username.isNotBlank()) {
+                                            dispatchSingleField(
+                                                item = item,
+                                                isSuggested = true,
+                                                value = item.username,
+                                                label = item.title
+                                            )
+                                        }
+                                    },
+                                    onFillExtraField = { field ->
+                                        dispatchSingleField(item, isSuggested = true, value = field.value, label = field.label)
                                     },
                                     onCopyPassword = { onCopyPassword(item, unlockedDek) }
                                 )
@@ -345,8 +412,12 @@ internal fun PickerBottomSheetContent(
                                 }
                             }
                             items(uiState.otherItems, key = { it.id }) { item ->
+                                val extraFields = remember(item.id, item.encryptedExtraFields, unlockedDek) {
+                                    onDecryptExtraFields(item, unlockedDek)
+                                }
                                 PickerCredentialCard(
                                     item = item,
+                                    extraFields = extraFields,
                                     isMatchedTarget = false,
                                     canDirectFill = canDirectFill,
                                     onCardClick = {
@@ -359,6 +430,19 @@ internal fun PickerBottomSheetContent(
                                         } else {
                                             onAutoFillCredential(item, unlockedDek)
                                         }
+                                    },
+                                    onFillUsernameOnly = {
+                                        if (item.username.isNotBlank()) {
+                                            dispatchSingleField(
+                                                item = item,
+                                                isSuggested = false,
+                                                value = item.username,
+                                                label = item.title
+                                            )
+                                        }
+                                    },
+                                    onFillExtraField = { field ->
+                                        dispatchSingleField(item, isSuggested = false, value = field.value, label = field.label)
                                     },
                                     onCopyPassword = { onCopyPassword(item, unlockedDek) }
                                 )
@@ -410,9 +494,12 @@ private fun PickerConfirmFillDialog(
 @Composable
 private fun PickerCredentialCard(
     item: CredentialEntity,
+    extraFields: List<ExtraField>,
     isMatchedTarget: Boolean,
     canDirectFill: Boolean,
     onCardClick: () -> Unit,
+    onFillUsernameOnly: () -> Unit,
+    onFillExtraField: (ExtraField) -> Unit,
     onCopyPassword: () -> Unit
 ) {
     val context = LocalContext.current
@@ -433,86 +520,159 @@ private fun PickerCredentialCard(
             }
         )
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(12.dp)
         ) {
-            if (appIcon != null) {
-                Image(
-                    bitmap = appIcon,
-                    contentDescription = item.title,
-                    modifier = Modifier.size(38.dp)
-                )
-            } else {
-                Surface(
-                    modifier = Modifier.size(38.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Default.Key,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (appIcon != null) {
+                    Image(
+                        bitmap = appIcon,
+                        contentDescription = item.title,
+                        modifier = Modifier.size(38.dp)
+                    )
+                } else {
+                    Surface(
+                        modifier = Modifier.size(38.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.Key,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                 }
-            }
 
-            Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(12.dp))
 
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = item.username.ifBlank { item.packageName },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = if (canDirectFill) {
-                        stringResource(R.string.picker_card_hint_direct_fill)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = item.username.ifBlank { item.packageName },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = if (canDirectFill) {
+                            stringResource(R.string.picker_card_hint_direct_fill)
+                        } else {
+                            stringResource(R.string.picker_card_hint_copy)
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (item.username.isNotBlank()) {
+                    if (canDirectFill) {
+                        TextButton(onClick = onFillUsernameOnly) {
+                            Text(stringResource(R.string.action_fill_this_field))
+                        }
                     } else {
-                        stringResource(R.string.picker_card_hint_copy)
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            if (item.username.isNotBlank()) {
-                TextButton(
-                    onClick = {
-                        SensitiveClipboardHelper.copySensitive(
-                            context,
-                            context.getString(R.string.field_username),
-                            item.username
-                        )
+                        TextButton(
+                            onClick = {
+                                SensitiveClipboardHelper.copySensitive(
+                                    context,
+                                    context.getString(R.string.field_username),
+                                    item.username
+                                )
+                            }
+                        ) {
+                            Text(stringResource(R.string.action_copy_username))
+                        }
                     }
-                ) {
-                    Text(stringResource(R.string.action_copy_username))
+                }
+
+                FilledTonalButton(onClick = onCopyPassword) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(stringResource(R.string.action_copy_password))
                 }
             }
 
-            FilledTonalButton(onClick = onCopyPassword) {
-                Icon(
-                    Icons.Default.ContentCopy,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.action_copy_password))
+            if (extraFields.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                Spacer(modifier = Modifier.height(6.dp))
+                extraFields.forEachIndexed { idx, field ->
+                    var revealed by remember(item.id, idx) { mutableStateOf(!field.isSecret) }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = field.label,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = if (revealed) field.value else "••••••••",
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        if (field.isSecret) {
+                            IconButton(
+                                onClick = { revealed = !revealed },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (revealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = stringResource(R.string.toggle_password_visibility_desc),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        if (canDirectFill) {
+                            TextButton(onClick = { onFillExtraField(field) }) {
+                                Text(stringResource(R.string.action_fill_this_field))
+                            }
+                        }
+                        IconButton(
+                            onClick = {
+                                SensitiveClipboardHelper.copySensitive(
+                                    context = context,
+                                    label = field.label,
+                                    secretText = field.value
+                                )
+                            },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = stringResource(R.string.action_copy_password),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

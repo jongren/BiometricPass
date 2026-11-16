@@ -533,9 +533,13 @@ internal fun UnlockedVaultScreen(
                         CredentialCardItem(
                             item = item,
                             revealedPassword = vaultState.revealedPasswords[item.id],
+                            extraFields = vaultState.loadedExtraFields[item.id].orEmpty(),
                             onToggleRevealPassword = { vaultViewModel.toggleRevealPassword(item) },
+                            onLoadExtraFields = { vaultViewModel.loadExtraFieldsForCard(item) },
+                            onClearExtraFields = { vaultViewModel.clearLoadedExtraFields(item.id) },
                             onCopyUsername = { vaultViewModel.copyUsername(item) },
                             onCopyPassword = { vaultViewModel.copyPassword(item) },
+                            onCopyExtraField = vaultViewModel::copyExtraField,
                             onEdit = {
                                 val editIntent = GenerateAndSaveActivity.createIntent(
                                     context = context,

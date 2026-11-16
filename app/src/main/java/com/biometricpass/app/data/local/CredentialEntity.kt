@@ -29,5 +29,14 @@ data class CredentialEntity(
     val updatedAt: Long = System.currentTimeMillis(),
     /** Lowercase hex SHA-256 of the target App's signing certificate when saved (empty for browsers / legacy). */
     @ColumnInfo(defaultValue = "")
-    val appSignatureSha256: String = ""
-)
+    val appSignatureSha256: String = "",
+    /** AES-256-GCM encrypted JSON array of `ExtraField` items (e.g. User ID, PIN, encrypted notes). */
+    @ColumnInfo(defaultValue = "")
+    val encryptedExtraFields: String = "",
+    /** Dedicated 12-byte random GCM IV paired exclusively with [encryptedExtraFields]. */
+    @ColumnInfo(defaultValue = "")
+    val extraFieldsIv: String = ""
+) {
+    val hasExtraFields: Boolean
+        get() = encryptedExtraFields.isNotBlank() && extraFieldsIv.isNotBlank()
+}

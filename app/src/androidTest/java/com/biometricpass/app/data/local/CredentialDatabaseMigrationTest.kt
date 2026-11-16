@@ -38,7 +38,13 @@ class CredentialDatabaseMigrationTest {
             close()
         }
 
-        helper.runMigrationsAndValidate(testDbName, 2, true, CredentialDatabase.MIGRATION_1_2)
+        helper.runMigrationsAndValidate(
+            testDbName,
+            3,
+            true,
+            CredentialDatabase.MIGRATION_1_2,
+            CredentialDatabase.MIGRATION_2_3
+        )
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val db = Room.databaseBuilder(context, CredentialDatabase::class.java, testDbName)
@@ -50,6 +56,8 @@ class CredentialDatabaseMigrationTest {
             val single = all.single()
             assertEquals("alice", single.username)
             assertEquals("", single.appSignatureSha256)
+            assertEquals("", single.encryptedExtraFields)
+            assertEquals("", single.extraFieldsIv)
         } finally {
             db.close()
             context.deleteDatabase(testDbName)

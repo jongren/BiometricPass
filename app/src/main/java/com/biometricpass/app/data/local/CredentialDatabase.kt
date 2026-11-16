@@ -17,7 +17,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  */
 @Database(
     entities = [CredentialEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class CredentialDatabase : RoomDatabase() {
@@ -36,7 +36,19 @@ abstract class CredentialDatabase : RoomDatabase() {
             }
         }
 
-        val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2)
+        /** v2 -> v3: adds `encryptedExtraFields` + `extraFieldsIv` for AES-256-GCM custom fields (User ID, PIN, notes). */
+        val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `credentials` ADD COLUMN `encryptedExtraFields` TEXT NOT NULL DEFAULT ''"
+                )
+                db.execSQL(
+                    "ALTER TABLE `credentials` ADD COLUMN `extraFieldsIv` TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
+        val ALL_MIGRATIONS: Array<Migration> = arrayOf(MIGRATION_1_2, MIGRATION_2_3)
 
         @Volatile
         private var INSTANCE: CredentialDatabase? = null

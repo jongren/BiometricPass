@@ -3,6 +3,7 @@ package com.biometricpass.app.autofill
 import androidx.biometric.BiometricPrompt
 import com.biometricpass.app.crypto.BiometricAuthHelper
 import com.biometricpass.app.data.local.CredentialEntity
+import com.biometricpass.app.data.model.ExtraField
 import com.biometricpass.app.ui.autofill.PickerViewModel
 import com.biometricpass.app.util.AppSignatures
 import com.biometricpass.app.util.PublicSuffixListTest
@@ -106,6 +107,65 @@ class AutofillSlotAndMappingTest {
             mapOf("u" to "alice", "p1" to "GenPass!23", "p2_confirm" to "GenPass!23"),
             mapped
         )
+
+        // Single-field focused fill (e.g. filling Bank User ID or Wallet PIN into an unlabeled input)
+        val singleFocused = AutofillDatasetFactory.mapSingleFieldFillValues(
+            focusedId = "unlabeled_box_2",
+            passwordId = "p1",
+            usernameId = "u",
+            editableIds = listOf("u", "unlabeled_box_2", "p1"),
+            value = "jongren88"
+        )
+        assertEquals(mapOf("unlabeled_box_2" to "jongren88"), singleFocused)
+    }
+
+    @Test
+    fun `3-field bank credential mapping fills National ID, User ID and Password regardless of storage order`() {
+        // Style A: username = 身分證字號, extraFields = [User ID]
+        val styleA = AutofillDatasetFactory.mapCredentialFillValues(
+            usernameId = "box_id",
+            secondaryUsernameId = "box_code",
+            passwordId = "box_pwd",
+            focusedId = "box_code",
+            editableIds = listOf("box_id", "box_code", "box_pwd"),
+            username = "A123456789",
+            password = "BankSecret!1",
+            extraFields = listOf(ExtraField(label = "User ID", value = "jongren88"))
+        )
+        assertEquals(
+            mapOf("box_id" to "A123456789", "box_code" to "jongren88", "box_pwd" to "BankSecret!1"),
+            styleA
+        )
+
+        // Style B: username = 使用者代號, extraFields = [身分證字號]
+        val styleB = AutofillDatasetFactory.mapCredentialFillValues(
+            usernameId = "box_id",
+            secondaryUsernameId = "box_code",
+            passwordId = "box_pwd",
+            focusedId = "box_id",
+            editableIds = listOf("box_id", "box_code", "box_pwd"),
+            username = "jongren88",
+            password = "BankSecret!1",
+            extraFields = listOf(ExtraField(label = "身分證字號", value = "A123456789"))
+        )
+        assertEquals(
+            mapOf("box_id" to "A123456789", "box_code" to "jongren88", "box_pwd" to "BankSecret!1"),
+            styleB
+        )
+
+        // Variant where password uses custom keypad (`passwordId = null`): NEVER dumps password into User ID box!
+        val customPwdKeypad = AutofillDatasetFactory.mapCredentialFillValues(
+            usernameId = "box_id",
+            secondaryUsernameId = "box_code",
+            passwordId = null,
+            focusedId = "box_code",
+            editableIds = listOf("box_id", "box_code"),
+            username = "A123456789",
+            password = "BankSecret!1",
+            extraFields = emptyList()
+        )
+        assertEquals("A123456789", customPwdKeypad["box_id"])
+        assertNull("Must NEVER inject password into User ID slot", customPwdKeypad["box_code"])
     }
 
     @Test

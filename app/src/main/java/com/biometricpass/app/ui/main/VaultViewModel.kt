@@ -8,6 +8,7 @@ import com.biometricpass.app.BiometricPassApp
 import com.biometricpass.app.R
 import com.biometricpass.app.crypto.InMemorySecretRelay
 import com.biometricpass.app.data.local.CredentialEntity
+import com.biometricpass.app.data.model.ExtraField
 import com.biometricpass.app.util.AppLog
 import com.biometricpass.app.util.AppSettings
 import com.biometricpass.app.util.InstalledAppHelper
@@ -36,6 +37,7 @@ data class VaultUiState(
     val totalCount: Int = 0,
     val credentials: List<CredentialEntity> = emptyList(),
     val revealedPasswords: Map<Long, String> = emptyMap(),
+    val loadedExtraFields: Map<Long, List<ExtraField>> = emptyMap(),
     val isAutofillEnabled: Boolean = false,
     val healthReport: PasswordHealthAnalyzer.PasswordHealthReport? = null
 )
@@ -66,6 +68,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     private val searchQueryFlow = MutableStateFlow("")
     private val sortOptionFlow = MutableStateFlow(AppSettings.getSortOption(application))
     private val revealedPasswordsFlow = MutableStateFlow<Map<Long, String>>(emptyMap())
+    private val loadedExtraFieldsFlow = MutableStateFlow<Map<Long, List<ExtraField>>>(emptyMap())
     private val isAutofillEnabledFlow = MutableStateFlow(checkAutofillEnabled())
     private val healthReportFlow = MutableStateFlow<PasswordHealthAnalyzer.PasswordHealthReport?>(null)
 
@@ -83,8 +86,9 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         app.repository.observeAllCredentials(),
         combine(isUnlockedFlow, searchQueryFlow, sortOptionFlow, isAutofillEnabledFlow, ::FilterMeta),
         revealedPasswordsFlow,
+        loadedExtraFieldsFlow,
         healthReportFlow
-    ) { allItems, meta, revealed, health ->
+    ) { allItems, meta, revealed, extras, health ->
         val q = meta.query.trim().lowercase()
         val filtered = if (q.isEmpty()) {
             allItems
@@ -110,6 +114,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
             totalCount = allItems.size,
             credentials = sorted,
             revealedPasswords = revealed,
+            loadedExtraFields = extras,
             isAutofillEnabled = meta.autofill,
             healthReport = health
         )
@@ -135,6 +140,7 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         InMemorySecretRelay.clearVaultDek()
         isUnlockedFlow.value = false
         revealedPasswordsFlow.value = emptyMap()
+        loadedExtraFieldsFlow.value = emptyMap()
         healthReportFlow.value = null
         return wasUnlocked
     }
@@ -197,10 +203,36 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun loadExtraFieldsForCard(item: CredentialEntity) {
+        if (!item.hasExtraFields) {
+            loadedExtraFieldsFlow.update { it - item.id }
+            return
+        }
+        val dek = unlockedDek ?: return
+        try {
+            val fields = app.repository.decryptExtraFields(item, dek)
+            loadedExtraFieldsFlow.update { it + (item.id to fields) }
+        } catch (e: Exception) {
+            AppLog.w("VaultViewModel", "Failed to decrypt extra fields on expand", e)
+            emitToast(app.getString(R.string.decrypt_failed_msg), longDuration = true)
+        }
+    }
+
+    fun clearLoadedExtraFields(itemId: Long) {
+        loadedExtraFieldsFlow.update { it - itemId }
+    }
+
+    fun copyExtraField(label: String, value: String) {
+        if (value.isNotBlank()) {
+            SensitiveClipboardHelper.copySensitive(app, label, value)
+        }
+    }
+
     fun deleteCredential(item: CredentialEntity) {
         viewModelScope.launch {
             app.repository.deleteCredential(item.id)
             revealedPasswordsFlow.update { it - item.id }
+            loadedExtraFieldsFlow.update { it - item.id }
             _events.send(VaultUiEvent.ShowUndoDelete(item))
         }
     }

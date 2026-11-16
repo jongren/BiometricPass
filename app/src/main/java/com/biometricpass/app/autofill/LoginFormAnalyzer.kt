@@ -41,11 +41,26 @@ interface FormNode {
 }
 
 /**
+ * Non-blank value captured from an editable input node on a login / authentication form.
+ * Allows multi-field forms (e.g. Bank ID + User ID + Password, or unlabeled fields) to present
+ * quick-assign chips during Save without losing the 3rd field.
+ */
+data class CapturedFormField(
+    val labelHint: String,
+    val value: String,
+    val isPasswordMask: Boolean,
+    val isNumericPassword: Boolean
+)
+
+/**
  * Pure login-form detection heuristics (Android-framework free):
- * - Strictly identifies real login / password forms and explicit two-step login username screens.
+ * - Strictly identifies real login / password forms, 3-field Taiwanese bank login forms
+ *   (National ID `身分證字號` + User ID `使用者代號` + Password `使用者密碼`, even when the bank
+ *   masks National ID or User ID with `TYPE_TEXT_VARIATION_PASSWORD`), and two-step username screens.
  * - Excludes browser address/omnibox bars, search boxes, chat/message inputs, multiline text areas,
  *   and `IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS` subtrees.
- * - Never guesses arbitrary plain text-field pairs as username/password forms.
+ * - Field role classification is 100% deterministic from form structure & labels, never flipping
+ *   roles based on which input currently holds cursor focus.
  */
 object LoginFormAnalyzer {
 
@@ -53,13 +68,19 @@ object LoginFormAnalyzer {
         val packageName: String,
         val webDomain: String,
         val usernameNode: FormNode?,
+        /** Optional 2nd identifier field on 3-field Bank logins (e.g. `使用者代號` / `User ID`). */
+        val secondaryUsernameNode: FormNode? = null,
+        val secondaryUsernameLabel: String = "",
         val passwordNode: FormNode?,
-        /** Primary password node first, then every other password node (no duplicates). */
+        /** Primary password node first, then every other true password node (no duplicates). */
         val passwordNodes: List<FormNode>,
         val focusedNode: FormNode?,
         val editableNodes: List<FormNode>,
         val usernameText: String,
-        val passwordText: String
+        val secondaryUsernameText: String = "",
+        val passwordText: String,
+        val capturedFields: List<CapturedFormField> = emptyList(),
+        val isNumericPasswordFocus: Boolean = false
     )
 
     private val IGNORED_PACKAGES = setOf(
@@ -69,20 +90,37 @@ object LoginFormAnalyzer {
         "com.samsung.android.honeyboard"
     )
 
+    internal val NATIONAL_ID_KEYWORDS = listOf(
+        "身分證", "身份證", "統一編號", "統編", "居留證",
+        "id_card", "idno", "id_no", "cust_id", "custid", "roc_id", "national_id"
+    )
+
+    internal val USER_ID_CODE_KEYWORDS = listOf(
+        "使用者代號", "用戶代號", "網銀代號", "網路銀行代號", "登入代號", "會員代號",
+        "使用者代碼", "用戶代碼", "登入代碼", "代號",
+        "userid", "user_id", "usercode", "user_code", "login_code"
+    )
+
     // Keyword lists intentionally contain both English and Chinese terms so login forms in either
     // language are recognized regardless of the device's UI locale.
     private val USERNAME_KEYWORDS = listOf(
-        "username", "user_name", "userid", "user_id", "user_account",
+        "username", "user_name", "user_account",
         "login_id", "login_name", "login_user", "account", "acct",
-        "email", "e-mail", "id_card", "idno",
+        "email", "e-mail",
         "帳號", "帳戶", "使用者名稱", "用戶名", "電子郵件", "信箱", "電郵",
-        "登入帳號", "會員帳號", "員工編號", "工號", "身分證字號"
-    )
+        "登入帳號", "會員帳號", "員工編號", "工號"
+    ) + NATIONAL_ID_KEYWORDS + USER_ID_CODE_KEYWORDS
 
     private val PASSWORD_KEYWORDS = listOf(
         "password", "passwd", "passcode", "pwd", "user_pin", "pin_code", "pincode",
         "new-password", "current-password",
         "密碼", "通行碼", "暗號"
+    )
+
+    private val CONFIRM_OR_CHANGE_PASSWORD_KEYWORDS = listOf(
+        "confirm", "repeat", "retype", "verify_pwd", "new-password", "new_password",
+        "old_password", "current-password",
+        "確認密碼", "再次輸入", "重輸密碼", "新密碼", "舊密碼", "變更密碼"
     )
 
     private val NON_CREDENTIAL_KEYWORDS = listOf(
@@ -112,10 +150,9 @@ object LoginFormAnalyzer {
     ): Analysis {
         var detectedPackage = activityPackage
         var detectedDomain = ""
-        var usernameNode: FormNode? = null
-        var passwordNode: FormNode? = null
-        val allPasswordNodes = mutableListOf<FormNode>()
-        var visiblePasswordCandidateNode: FormNode? = null
+        val rawPasswordNodes = mutableListOf<FormNode>()
+        val explicitUsernameNodes = mutableListOf<FormNode>()
+        val visiblePasswordCandidates = mutableListOf<FormNode>()
         var focusedNode: FormNode? = null
         val allEditableNodes = mutableListOf<FormNode>()
         val nodeInheritedMeta = HashMap<FormNode, String>()
@@ -128,6 +165,24 @@ object LoginFormAnalyzer {
                 if (count > 1) return count
             }
             return count
+        }
+
+        fun collectPureLabelText(node: FormNode, depth: Int = 0): String {
+            if (!node.isVisible || depth > 3 || isEditableInputNode(node)) return ""
+            val ownText = node.text.trim()
+            if (node.children.isEmpty()) {
+                return if (ownText.length in 1..28) ownText else ""
+            }
+            return buildString {
+                if (ownText.length in 1..28) append(ownText)
+                for (c in node.children) {
+                    val sub = collectPureLabelText(c, depth + 1)
+                    if (sub.isNotEmpty()) {
+                        if (isNotEmpty()) append(" ")
+                        append(sub)
+                    }
+                }
+            }.trim()
         }
 
         fun traverse(node: FormNode, inheritedMeta: String = "", insideWebTree: Boolean = false) {
@@ -160,12 +215,10 @@ object LoginFormAnalyzer {
                 }
             }.trim()
 
-            val effectiveMeta = if (inheritedMeta.isNotBlank() && ownMeta.isNotBlank()) {
-                "$ownMeta $inheritedMeta"
-            } else if (ownMeta.isNotBlank()) {
-                ownMeta
-            } else {
-                inheritedMeta
+            val effectiveMeta = when {
+                inheritedMeta.isNotBlank() && ownMeta.isNotBlank() -> "$ownMeta $inheritedMeta"
+                ownMeta.isNotBlank() -> ownMeta
+                else -> inheritedMeta
             }
 
             if (isEditableInputNode(node) &&
@@ -185,103 +238,258 @@ object LoginFormAnalyzer {
 
                 when {
                     isStrictPasswordNode(node, effectiveMeta) -> {
-                        allPasswordNodes.add(node)
-                        if (passwordNode == null || node.isFocused || passwordNode?.isFocused != true) {
-                            passwordNode = node
-                        }
+                        rawPasswordNodes.add(node)
                     }
                     isUsernameNode(node, effectiveMeta) -> {
-                        if (usernameNode == null || node.isFocused) {
-                            usernameNode = node
-                        }
+                        explicitUsernameNodes.add(node)
                     }
                     isVisiblePasswordInputType(node) -> {
-                        if (visiblePasswordCandidateNode == null || node.isFocused) {
-                            visiblePasswordCandidateNode = node
-                        }
+                        visiblePasswordCandidates.add(node)
                     }
                 }
             }
 
-            // Pass container metadata (e.g. from TextInputLayout or a single-input row with a TextView label)
-            // down ONLY when this container wraps a single visible editable input, preventing form-level
-            // containers from leaking "password" metadata onto sibling fields.
-            val childInheritedMeta = if (!isEditableInputNode(node) &&
-                node.children.size in 1..4 &&
-                countVisibleEditableDescendants(node) == 1
-            ) {
-                buildString {
+            if (isEditableInputNode(node) || node.children.isEmpty()) return
+
+            val editableDescendantCount = countVisibleEditableDescendants(node)
+            if (editableDescendantCount == 1 && node.children.size in 1..6) {
+                // Single-input row/wrapper (e.g. TextInputLayout or LinearLayout row with nested label FrameLayout)
+                val singleInputMeta = buildString {
                     if (effectiveMeta.isNotBlank()) append(effectiveMeta)
                     for (child in node.children) {
-                        if (child.isVisible && !isEditableInputNode(child) && child.children.isEmpty()) {
-                            val labelText = child.text.trim()
-                            if (labelText.length in 1..24) {
-                                append(" ")
-                                append(labelText)
+                        if (countVisibleEditableDescendants(child) == 0) {
+                            val lbl = collectPureLabelText(child)
+                            if (lbl.isNotBlank()) {
+                                if (isNotEmpty()) append(" ")
+                                append(lbl)
                             }
                         }
                     }
                 }.trim()
+                for (child in node.children) {
+                    traverse(child, singleInputMeta, currentInsideWeb)
+                }
             } else {
-                ""
-            }
-
-            for (child in node.children) {
-                traverse(child, childInheritedMeta, currentInsideWeb)
+                // Multi-input container (e.g. flat ConstraintLayout / LinearLayout with [Label1, Input1, Label2, Input2, Label3, Input3]):
+                // pair each pure label sibling strictly with the immediately following single-input sibling!
+                var pendingSiblingLabel = ""
+                for (child in node.children) {
+                    if (!child.isVisible) continue
+                    val childEditCount = countVisibleEditableDescendants(child)
+                    if (childEditCount == 0) {
+                        val lbl = collectPureLabelText(child)
+                        if (lbl.isNotBlank()) {
+                            pendingSiblingLabel = lbl
+                        }
+                    } else if (childEditCount == 1) {
+                        traverse(child, pendingSiblingLabel, currentInsideWeb)
+                        pendingSiblingLabel = ""
+                    } else {
+                        pendingSiblingLabel = ""
+                        traverse(child, "", currentInsideWeb)
+                    }
+                }
             }
         }
 
         roots.forEach { traverse(it) }
 
-        // Only promote a standalone `textVisiblePassword` field to passwordNode when an explicit
-        // usernameNode already precedes it on the same form (many non-password fields use
-        // textVisiblePassword merely to suppress keyboard spellcheck).
-        val visibleCandidate = visiblePasswordCandidateNode
-        if (passwordNode == null && visibleCandidate != null && usernameNode != null) {
-            val userIdx = allEditableNodes.indexOf(usernameNode)
-            val visPwdIdx = allEditableNodes.indexOf(visibleCandidate)
-            if (userIdx in 0 until visPwdIdx) {
-                passwordNode = visibleCandidate
-                allPasswordNodes.add(visibleCandidate)
+        // Promote standalone `textVisiblePassword` ONLY when an explicit username precedes it
+        if (rawPasswordNodes.isEmpty() && visiblePasswordCandidates.isNotEmpty() && explicitUsernameNodes.isNotEmpty()) {
+            val firstUserIdx = allEditableNodes.indexOf(explicitUsernameNodes.first())
+            val visPwd = visiblePasswordCandidates.firstOrNull { allEditableNodes.indexOf(it) > firstUserIdx }
+            if (visPwd != null) {
+                rawPasswordNodes.add(visPwd)
             }
         }
 
-        // Companion Username Resolution: ONLY when a real passwordNode has been confirmed on screen,
-        // if usernameNode wasn't explicitly labeled, find the nearest preceding editable field in the
-        // same layer (web vs native) so both username and password can be filled together.
-        val confirmedPassword = passwordNode
-        if (confirmedPassword != null && usernameNode == null) {
-            val pwdIsWeb = isWebNode(confirmedPassword)
-            val pwdIndex = allEditableNodes.indexOf(confirmedPassword)
-            if (pwdIndex > 0) {
-                for (i in (pwdIndex - 1) downTo 0) {
-                    val candidate = allEditableNodes[i]
-                    if (isWebNode(candidate) != pwdIsWeb) continue
-                    val meta = nodeInheritedMeta[candidate].orEmpty()
-                    if (!isStrictPasswordNode(candidate, meta)) {
-                        usernameNode = candidate
-                        break
+        // Disambiguate multi-masked login forms (common in Taiwanese Bank Apps such as Taishin Bank,
+        // where National ID and/or User ID also use TYPE_TEXT_VARIATION_PASSWORD for shoulder-surfing
+        // protection) vs registration / change-password forms (`Password` + `Confirm Password`):
+        val confirmedPasswordNodes = resolveConfirmedPasswordNodes(
+            allEditableNodes = allEditableNodes,
+            rawPasswordNodes = rawPasswordNodes,
+            explicitUsernameNodes = explicitUsernameNodes,
+            nodeInheritedMeta = nodeInheritedMeta
+        )
+        val passwordNode: FormNode? = confirmedPasswordNodes.firstOrNull()
+
+        // Resolve primary `usernameNode` and optional 3-field Bank `secondaryUsernameNode` (`使用者代號`)
+        // strictly from non-password editable fields in the same layer (web vs native).
+        var usernameNode: FormNode? = null
+        var secondaryUsernameNode: FormNode? = null
+
+        if (passwordNode != null) {
+            val pwdIsWeb = isWebNode(passwordNode)
+            val pwdIdx = allEditableNodes.indexOf(passwordNode)
+            val precedingIdentifierNodes = allEditableNodes
+                .subList(0, pwdIdx.coerceAtLeast(0))
+                .filter { isWebNode(it) == pwdIsWeb && it !in confirmedPasswordNodes }
+
+            when {
+                precedingIdentifierNodes.size >= 2 -> {
+                    val natId = precedingIdentifierNodes.firstOrNull { n ->
+                        val meta = nodeInheritedMeta[n].orEmpty().lowercase()
+                        NATIONAL_ID_KEYWORDS.any { meta.contains(it) }
                     }
+                    val userCode = precedingIdentifierNodes.firstOrNull { n ->
+                        n !== natId && USER_ID_CODE_KEYWORDS.any {
+                            nodeInheritedMeta[n].orEmpty().lowercase().contains(it)
+                        }
+                    }
+                    if (natId != null && userCode != null) {
+                        usernameNode = natId
+                        secondaryUsernameNode = userCode
+                    } else {
+                        // Standard 3-field Taiwanese bank layout order: [0] 身分證字號, [1] 使用者代號
+                        usernameNode = precedingIdentifierNodes[precedingIdentifierNodes.size - 2]
+                        secondaryUsernameNode = precedingIdentifierNodes[precedingIdentifierNodes.size - 1]
+                    }
+                }
+                precedingIdentifierNodes.size == 1 -> {
+                    usernameNode = precedingIdentifierNodes.single()
+                }
+                else -> {
+                    usernameNode = explicitUsernameNodes.firstOrNull {
+                        isWebNode(it) == pwdIsWeb && it !in confirmedPasswordNodes
+                    }
+                }
+            }
+        } else if (explicitUsernameNodes.size >= 2) {
+            val natId = explicitUsernameNodes.firstOrNull { n ->
+                val meta = nodeInheritedMeta[n].orEmpty().lowercase()
+                NATIONAL_ID_KEYWORDS.any { meta.contains(it) }
+            }
+            val userCode = explicitUsernameNodes.firstOrNull { n ->
+                n !== natId && USER_ID_CODE_KEYWORDS.any {
+                    nodeInheritedMeta[n].orEmpty().lowercase().contains(it)
+                }
+            }
+            if (natId != null && userCode != null) {
+                usernameNode = natId
+                secondaryUsernameNode = userCode
+            } else {
+                usernameNode = explicitUsernameNodes[0]
+                secondaryUsernameNode = explicitUsernameNodes[1]
+            }
+        } else {
+            usernameNode = explicitUsernameNodes.firstOrNull()
+        }
+
+        val secondaryUsernameLabel = secondaryUsernameNode?.let { node ->
+            resolveCleanFieldLabel(node, nodeInheritedMeta[node].orEmpty())
+        }.orEmpty()
+
+        val capturedFields = buildList<CapturedFormField> {
+            for (editable in allEditableNodes) {
+                val valText = extractNodeText(editable).trim()
+                if (valText.isEmpty()) continue
+                val meta = nodeInheritedMeta[editable].orEmpty()
+                val isPwd = editable in confirmedPasswordNodes
+                val isNumPwd = isPwd && isNumericPinNode(editable, meta)
+                val label = resolveCleanFieldLabel(editable, meta)
+                if (none { it.value == valText && it.isPasswordMask == isPwd }) {
+                    add(
+                        CapturedFormField(
+                            labelHint = label,
+                            value = valText,
+                            isPasswordMask = isPwd,
+                            isNumericPassword = isNumPwd
+                        )
+                    )
                 }
             }
         }
 
-        val passwordNodes = buildList {
-            passwordNode?.let { add(it) }
-            for (n in allPasswordNodes) if (!contains(n)) add(n)
-        }
+        val focusTarget = focusedNode ?: passwordNode
+        val isNumericPasswordFocus = focusTarget != null &&
+            isNumericPinNode(focusTarget, nodeInheritedMeta[focusTarget].orEmpty())
 
         return Analysis(
             packageName = if (detectedPackage == ownPackageName) "" else detectedPackage,
             webDomain = detectedDomain,
             usernameNode = usernameNode,
+            secondaryUsernameNode = secondaryUsernameNode,
+            secondaryUsernameLabel = secondaryUsernameLabel,
             passwordNode = passwordNode,
-            passwordNodes = passwordNodes,
+            passwordNodes = confirmedPasswordNodes,
             focusedNode = focusedNode,
             editableNodes = allEditableNodes,
             usernameText = extractNodeText(usernameNode),
-            passwordText = extractNodeText(passwordNode)
+            secondaryUsernameText = extractNodeText(secondaryUsernameNode),
+            passwordText = extractNodeText(passwordNode),
+            capturedFields = capturedFields,
+            isNumericPasswordFocus = isNumericPasswordFocus
         )
+    }
+
+    private fun resolveConfirmedPasswordNodes(
+        allEditableNodes: List<FormNode>,
+        rawPasswordNodes: List<FormNode>,
+        explicitUsernameNodes: List<FormNode>,
+        nodeInheritedMeta: Map<FormNode, String>
+    ): List<FormNode> {
+        if (rawPasswordNodes.size <= 1) return rawPasswordNodes
+
+        // Check whether this is an explicit registration / password-change form (Confirm / New Password)
+        val hasConfirmOrChangeKeyword = rawPasswordNodes.any { node ->
+            val meta = "${ownMetaLower(node)} ${nodeInheritedMeta[node].orEmpty().lowercase()}"
+            CONFIRM_OR_CHANGE_PASSWORD_KEYWORDS.any { meta.contains(it) }
+        }
+        if (hasConfirmOrChangeKeyword) {
+            return rawPasswordNodes
+        }
+
+        // During onSaveRequest, if two password-masked inputs contain identical non-blank text,
+        // they are [Password, Confirm Password] on a sign-up form.
+        val lastTwoTexts = rawPasswordNodes.takeLast(2).map { extractNodeText(it).trim() }
+        if (lastTwoTexts.size == 2 &&
+            lastTwoTexts[0].isNotEmpty() &&
+            lastTwoTexts[0] == lastTwoTexts[1]
+        ) {
+            return rawPasswordNodes
+        }
+
+        // Otherwise, when a form has multiple masked fields with NO confirm/change-password keywords
+        // (e.g. [masked ID, masked User ID, masked Password] or [plain ID, masked User ID, masked Password]
+        // or [masked Account, masked Password]), earlier masked inputs are masked login identifiers
+        // and the LAST masked input is the actual login password!
+        if (explicitUsernameNodes.isEmpty() || allEditableNodes.size >= 3) {
+            return listOf(rawPasswordNodes.last())
+        }
+
+        return rawPasswordNodes
+    }
+
+    private fun isNumericPinNode(node: FormNode, effectiveMeta: String): Boolean {
+        val inputType = node.inputType
+        val isNumberPwd = (inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_NUMBER &&
+            (inputType and InputType.TYPE_MASK_VARIATION) == InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        if (isNumberPwd) return true
+        val lower = effectiveMeta.lowercase()
+        return lower.contains("pin") ||
+            lower.contains("passcode") ||
+            lower.contains("交易密碼") ||
+            lower.contains("提款密碼") ||
+            lower.contains("支付密碼") ||
+            lower.contains("安全碼")
+    }
+
+    private fun resolveCleanFieldLabel(node: FormNode, inheritedMeta: String): String {
+        val directHint = node.hint.trim()
+        if (directHint.length in 1..24) return directHint
+        val desc = node.contentDescription.trim()
+        if (desc.length in 1..24) return desc
+        val inheritedLower = inheritedMeta.lowercase()
+        when {
+            USER_ID_CODE_KEYWORDS.any { inheritedLower.contains(it) } -> return "使用者代號"
+            NATIONAL_ID_KEYWORDS.any { inheritedLower.contains(it) } -> return "身分證字號"
+        }
+        val idClean = node.idEntry.trim()
+        if (idClean.length in 3..24 && !idClean.matches(Regex("^[a-z]{1,2}\\d+$", RegexOption.IGNORE_CASE))) {
+            return idClean
+        }
+        return inheritedMeta.trim().take(24)
     }
 
     private fun isWebNode(node: FormNode): Boolean = node.webDomain.isNotBlank() || node.hasHtmlInfo
@@ -312,8 +520,6 @@ object LoginFormAnalyzer {
         hostPackage: String,
         insideWebTree: Boolean
     ): Boolean {
-        // 1. Inside a browser app, any native input outside the web document tree is browser UI
-        //    (e.g. Chrome/Samsung/Firefox address bar, omnibox, find-in-page), never a website login field.
         if (AssistStructureParser.isBrowserPackage(hostPackage) && !insideWebTree) {
             return true
         }
@@ -336,12 +542,10 @@ object LoginFormAnalyzer {
             }
         }
 
-        // 2. If the field has explicit hardware/inputType password masking, never exclude it.
         if (hasHiddenPasswordInputType(node)) {
             return false
         }
 
-        // 3. Multiline / chat message inputs (e.g. LINE chat box, comment editors, notes) are never credentials.
         val inputType = node.inputType
         if ((inputType and InputType.TYPE_MASK_CLASS) == InputType.TYPE_CLASS_TEXT) {
             val variation = inputType and InputType.TYPE_MASK_VARIATION
@@ -354,7 +558,6 @@ object LoginFormAnalyzer {
             }
         }
 
-        // 4. Exclude explicit search / URL / chat / comment / OTP fields unless explicitly marked as password.
         val metaLower = effectiveMeta.lowercase()
         val ownLower = ownMeta.lowercase()
         if (PASSWORD_KEYWORDS.none { ownLower.contains(it) } &&
@@ -403,6 +606,23 @@ object LoginFormAnalyzer {
             }
         }
 
+        val ownLower = ownMetaLower(node)
+        val combinedMeta = if (inheritedMeta.isNotBlank()) {
+            "$ownLower ${inheritedMeta.lowercase()}"
+        } else {
+            ownLower
+        }
+
+        // CRITICAL FOR TAIWANESE BANK APPS:
+        // Fields explicitly labeled as National ID ("身分證字號") or User ID ("使用者代號" / "userid")
+        // often set `inputType = textPassword` solely to mask dots against shoulder surfing.
+        // Never classify an explicitly labeled ID / User ID field as the password field!
+        if (USERNAME_KEYWORDS.any { combinedMeta.contains(it) } &&
+            PASSWORD_KEYWORDS.none { combinedMeta.contains(it) }
+        ) {
+            return false
+        }
+
         if (hasHiddenPasswordInputType(node)) {
             return true
         }
@@ -416,24 +636,7 @@ object LoginFormAnalyzer {
             }
         }
 
-        val ownMetaLower = ownMetaLower(node)
-        if (USERNAME_KEYWORDS.any { ownMetaLower.contains(it) } &&
-            PASSWORD_KEYWORDS.none { ownMetaLower.contains(it) }
-        ) {
-            return false
-        }
-
-        val combinedMeta = if (inheritedMeta.isNotBlank()) {
-            "$ownMetaLower ${inheritedMeta.lowercase()}"
-        } else {
-            ownMetaLower
-        }
-        val hasPasswordKeyword = PASSWORD_KEYWORDS.any { combinedMeta.contains(it) }
-        val hasUsernameKeyword = USERNAME_KEYWORDS.any { combinedMeta.contains(it) }
-        if (hasUsernameKeyword && !hasPasswordKeyword) {
-            return false
-        }
-        return hasPasswordKeyword
+        return PASSWORD_KEYWORDS.any { combinedMeta.contains(it) }
     }
 
     private fun isUsernameNode(node: FormNode, inheritedMeta: String = ""): Boolean {

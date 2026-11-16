@@ -12,6 +12,7 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.biometricpass.app.BiometricPassApp
 import com.biometricpass.app.BuildConfig
@@ -46,6 +47,7 @@ class GenerateAndSaveActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         if (!BuildConfig.DEBUG) {
             window.setFlags(
                 WindowManager.LayoutParams.FLAG_SECURE,
@@ -92,11 +94,20 @@ class GenerateAndSaveActivity : AppCompatActivity() {
                 GenerateAndSaveSheetContent(
                     uiState = uiState,
                     onTitleChange = viewModel::onTitleChange,
+                    onApplyQuickTitleSuffix = viewModel::onApplyQuickTitleSuffix,
                     onUsernameChange = viewModel::onUsernameChange,
                     onPasswordChange = viewModel::onPasswordChange,
                     onPackageNameChange = viewModel::onPackageNameChange,
                     onWebDomainChange = viewModel::onWebDomainChange,
                     onAppPicked = viewModel::onAppPicked,
+                    onSetAppendMode = viewModel::onSetAppendMode,
+                    onSelectAppendTarget = viewModel::onSelectAppendTarget,
+                    onAppendFieldLabelChange = viewModel::onAppendFieldLabelChange,
+                    onAddExtraField = { label -> viewModel.addExtraField(label = label) },
+                    onUpdateExtraField = viewModel::updateExtraField,
+                    onRemoveExtraField = viewModel::removeExtraField,
+                    onAssignCapturedToUsername = viewModel::assignCapturedToUsername,
+                    onAssignCapturedToExtraField = viewModel::assignCapturedToExtraField,
                     onTogglePasswordVisibility = viewModel::togglePasswordVisibility,
                     onSelectMode = viewModel::selectMode,
                     onLengthChange = viewModel::onLengthChange,
@@ -109,13 +120,16 @@ class GenerateAndSaveActivity : AppCompatActivity() {
                         setResult(Activity.RESULT_CANCELED)
                         finish()
                     },
-                    onConfirmSave = {
+                    onConfirmSave = { forceCreateNew ->
+                        val effectiveUpdate = !forceCreateNew &&
+                            (uiState.isUpdateAction || uiState.isAppendToExistingMode)
                         promptBiometricAndSave(
                             app = app,
                             target = target,
                             isCompactFillMode = uiState.isCompactFillMode,
                             isFromAutofillSave = uiState.isFromAutofillSave,
-                            isUpdateAction = uiState.isUpdateAction
+                            isUpdateAction = effectiveUpdate,
+                            forceCreateNew = forceCreateNew
                         )
                     }
                 )
@@ -128,7 +142,8 @@ class GenerateAndSaveActivity : AppCompatActivity() {
         target: AutofillTargetRequest,
         isCompactFillMode: Boolean,
         isFromAutofillSave: Boolean,
-        isUpdateAction: Boolean
+        isUpdateAction: Boolean,
+        forceCreateNew: Boolean
     ) {
         BiometricAuthHelper.authenticateAndUnlockDek(
             activity = this,
@@ -148,7 +163,8 @@ class GenerateAndSaveActivity : AppCompatActivity() {
                         val saved = viewModel.saveCredential(
                             dek = dek,
                             defaultUntitledTitle = getString(R.string.default_untitled_item),
-                            defaultCustomTitle = getString(R.string.default_custom_password_title)
+                            defaultCustomTitle = getString(R.string.default_custom_password_title),
+                            forceCreateNew = forceCreateNew
                         )
                         deliverSavedResultAndFinish(saved, target, isFromAutofillSave)
                     } catch (e: Exception) {
@@ -210,7 +226,13 @@ class GenerateAndSaveActivity : AppCompatActivity() {
         }
 
         // 3. Autofill Save or Standalone Save/Update (Notification shortcut / Vault FAB / Edit)
-        if (!isFromAutofillSave && target.credentialId == 0L) {
+        if (saved.isAppendedExtraField) {
+            Toast.makeText(
+                this,
+                getString(R.string.gen_toast_appended_extra_field, saved.finalTitle),
+                Toast.LENGTH_SHORT
+            ).show()
+        } else if (!isFromAutofillSave && target.credentialId == 0L) {
             SensitiveClipboardHelper.copySensitive(
                 context = this,
                 label = getString(R.string.clipboard_label_item_password, saved.finalTitle),

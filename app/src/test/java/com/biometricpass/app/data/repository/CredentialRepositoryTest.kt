@@ -4,6 +4,7 @@ import com.biometricpass.app.crypto.VaultCipher
 import com.biometricpass.app.crypto.VaultCrypto
 import com.biometricpass.app.data.local.CredentialDao
 import com.biometricpass.app.data.local.CredentialEntity
+import com.biometricpass.app.data.model.ExtraField
 import com.biometricpass.app.util.AppSignatureVerifier
 import com.biometricpass.app.util.AppSignatures
 import kotlinx.coroutines.flow.Flow
@@ -424,5 +425,122 @@ class CredentialRepositoryTest {
         assertEquals(realCert, targetDao.rows.values.single().appSignatureSha256)
         assertTrue(targetRepo.findMatchingForAutofill(line, "").isEmpty())
         assertTrue(targetRepo.hasSignatureBlockedCredentials(line))
+    }
+
+    @Test
+    fun `wallet PIN save never overwrites generated login password and both remain visible in autofill`() = runTest {
+        val dek = VaultCrypto.newAesKey()
+        val dao = InMemoryDao()
+        val repo = CredentialRepository(dao, FakeCipher())
+        val walletPkg = "com.samsung.android.spay"
+
+        // 1. User saves Samsung Account login with a generated high-entropy password
+        val loginSave = repo.saveOrUpdateCredential(
+            title = "三星錢包",
+            packageName = walletPkg,
+            username = "jongren@gmail.com",
+            plainPassword = "G9#xK2!mQ8@vL4&z",
+            dek = dek
+        )
+        assertFalse(loginSave.isUpdate)
+
+        // 2. Samsung Wallet subsequently prompts to set a 6-digit PIN (username is blank)
+        val pinSave = repo.saveOrUpdateCredential(
+            title = "三星錢包 - PIN 碼",
+            packageName = walletPkg,
+            username = "",
+            plainPassword = "852963",
+            dek = dek
+        )
+        assertFalse("PIN save must NOT overwrite the login credential", pinSave.isUpdate)
+        assertEquals(2, dao.rows.size)
+        assertEquals("G9#xK2!mQ8@vL4&z", repo.decryptPassword(dao.rows[loginSave.id]!!, dek))
+        assertEquals("852963", repo.decryptPassword(dao.rows[pinSave.id]!!, dek))
+
+        // Both the login credential AND the PIN credential remain available for Autofill!
+        val autofillMatches = repo.findMatchingForAutofill(walletPkg, "")
+        assertEquals(2, autofillMatches.size)
+    }
+
+    @Test
+    fun `encrypted extra fields use distinct IV, survive backup and key rotation, and stay intact on password update`() = runTest {
+        val oldDek = VaultCrypto.newAesKey()
+        val newDek = VaultCrypto.newAesKey()
+        val dao = InMemoryDao()
+        val repo = CredentialRepository(dao, FakeCipher())
+        val bankPkg = "com.ctbcbank.mobile"
+
+        // Save bank credential with National ID as username + User ID as encrypted extra field
+        val saved = repo.saveOrUpdateCredential(
+            title = "中國信託",
+            packageName = bankPkg,
+            username = "A123456789",
+            plainPassword = "BankLogin!99",
+            dek = oldDek,
+            extraFields = listOf(ExtraField(label = "User ID", value = "jongren88", isSecret = true))
+        )
+        val initialEntity = dao.rows[saved.id]!!
+        assertTrue(initialEntity.hasExtraFields)
+        assertTrue(
+            "AES-GCM IV for extraFields must NEVER reuse primary password IV",
+            initialEntity.iv != initialEntity.extraFieldsIv
+        )
+
+        // Append a Wallet / Transaction PIN into the same credential without altering login password
+        val afterAppend = repo.appendExtraFieldToCredential(
+            credentialId = saved.id,
+            extraField = ExtraField(label = "交易密碼", value = "654321", isSecret = true),
+            dek = oldDek
+        )!!
+        assertEquals("BankLogin!99", repo.decryptPassword(afterAppend, oldDek))
+        assertEquals(
+            listOf(
+                ExtraField("User ID", "jongren88", true),
+                ExtraField("交易密碼", "654321", true)
+            ),
+            repo.decryptExtraFields(afterAppend, oldDek)
+        )
+
+        // Updating login password (even from a masked username screen "A123***789") preserves BOTH
+        // the unmasked username AND all existing encrypted extra fields!
+        val pwdUpdate = repo.saveOrUpdateCredential(
+            title = "中國信託",
+            packageName = bankPkg,
+            username = "A123***789",
+            plainPassword = "NewBankLogin!2026",
+            dek = oldDek
+        )
+        assertTrue(pwdUpdate.isUpdate)
+        val updatedEntity = dao.rows[saved.id]!!
+        assertEquals("A123456789", updatedEntity.username)
+        assertEquals("NewBankLogin!2026", repo.decryptPassword(updatedEntity, oldDek))
+        assertEquals(2, repo.decryptExtraFields(updatedEntity, oldDek).size)
+
+        // Rotate vault key -> both password AND extraFields re-encrypt atomically under newDek
+        assertEquals(1, repo.reencryptAllCredentials(oldDek, newDek))
+        val rotatedEntity = dao.rows[saved.id]!!
+        assertEquals("NewBankLogin!2026", repo.decryptPassword(rotatedEntity, newDek))
+        assertEquals(
+            listOf(
+                ExtraField("User ID", "jongren88", true),
+                ExtraField("交易密碼", "654321", true)
+            ),
+            repo.decryptExtraFields(rotatedEntity, newDek)
+        )
+
+        // Backup & restore onto another device preserves all extra fields
+        val backup = repo.exportEncryptedBackup(newDek)
+        val restoreDao = InMemoryDao()
+        val restoreRepo = CredentialRepository(restoreDao, FakeCipher())
+        val importRes = restoreRepo.importEncryptedBackup(backup, decryptKey = newDek)
+        assertEquals(1, importRes.added)
+        val restored = restoreDao.rows.values.single()
+        assertEquals(
+            listOf(
+                ExtraField("User ID", "jongren88", true),
+                ExtraField("交易密碼", "654321", true)
+            ),
+            restoreRepo.decryptExtraFields(restored, newDek)
+        )
     }
 }

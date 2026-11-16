@@ -74,9 +74,17 @@ fun InstalledAppPickerDialog(
         }
     }
 
+    val dialogProperties = remember {
+        DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = dialogProperties
     ) {
         Surface(
             modifier = Modifier

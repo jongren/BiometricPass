@@ -167,4 +167,76 @@ class LoginFormAnalyzerTest {
         assertSame(user, result.usernameNode)
         assertSame(pass, result.passwordNode)
     }
+
+    @Test
+    fun `taishin bank 3-field form with masked ID and masked User ID maps all 3 fields accurately`() {
+        // Flat ConstraintLayout with sibling TextViews and all 3 EditTexts masked with textPassword,
+        // even when cursor focus is currently on the middle User ID ("使用者代號") box!
+        val natIdInput = Node(idEntry = "et_a", inputType = textPassword, autofillText = "A123456789")
+        val userCodeInput = Node(
+            idEntry = "et_b",
+            inputType = textPassword,
+            isFocused = true,
+            autofillText = "jongren88"
+        )
+        val pwdInput = Node(idEntry = "et_c", inputType = textPassword, autofillText = "TaishinPass!9")
+
+        val flatLayout = container(
+            label("身分證字號"),
+            natIdInput,
+            label("使用者代號"),
+            userCodeInput,
+            label("使用者密碼"),
+            pwdInput,
+            className = "androidx.constraintlayout.widget.ConstraintLayout"
+        )
+
+        val result = analyze(flatLayout, pkg = "tw.com.taishinbank.mobile")
+        assertSame(natIdInput, result.usernameNode)
+        assertSame(userCodeInput, result.secondaryUsernameNode)
+        assertSame(pwdInput, result.passwordNode)
+        assertEquals("A123456789", result.usernameText)
+        assertEquals("jongren88", result.secondaryUsernameText)
+        assertEquals("TaishinPass!9", result.passwordText)
+        assertEquals(
+            listOf("A123456789", "jongren88"),
+            result.capturedFields.filter { !it.isPasswordMask }.map { it.value }
+        )
+    }
+
+    @Test
+    fun `unlabeled 3-field all-masked bank login never confuses middle User ID box with password`() {
+        val box1 = Node(idEntry = "f1", inputType = textPassword, autofillText = "A123456789")
+        val box2 = Node(idEntry = "f2", inputType = textPassword, isFocused = true, autofillText = "my_code")
+        val box3 = Node(idEntry = "f3", inputType = textPassword, autofillText = "real_secret")
+
+        val result = analyze(container(box1, box2, box3), pkg = "com.bank.app")
+        assertSame(box1, result.usernameNode)
+        assertSame(box2, result.secondaryUsernameNode)
+        assertSame(box3, result.passwordNode)
+    }
+
+    @Test
+    fun `bank form where password uses non-autofillable custom keypad never mistakes masked User ID for password`() {
+        val natIdInput = Node(hint = "請輸入身分證字號", inputType = textPassword)
+        val userCodeInput = Node(hint = "請輸入使用者代號", inputType = textPassword, isFocused = true)
+
+        val result = analyze(container(natIdInput, userCodeInput), pkg = "tw.com.taishinbank.mobile")
+        assertNull("Masked User ID must NEVER be classified as passwordNode", result.passwordNode)
+        assertSame(natIdInput, result.usernameNode)
+        assertSame(userCodeInput, result.secondaryUsernameNode)
+    }
+
+    @Test
+    fun `sign-up form with confirm password keeps both password fields and no secondary username`() {
+        val user = Node(hint = "帳號")
+        val pwd1 = Node(hint = "設定密碼", inputType = textPassword, autofillText = "SamePass!1")
+        val pwd2 = Node(hint = "確認密碼", inputType = textPassword, autofillText = "SamePass!1")
+
+        val result = analyze(container(user, pwd1, pwd2))
+        assertSame(user, result.usernameNode)
+        assertNull(result.secondaryUsernameNode)
+        assertSame(pwd1, result.passwordNode)
+        assertEquals(listOf(pwd1, pwd2), result.passwordNodes)
+    }
 }

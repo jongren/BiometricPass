@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.biometricpass.app.BiometricPassApp
 import com.biometricpass.app.autofill.AssistStructureParser
 import com.biometricpass.app.data.local.CredentialEntity
+import com.biometricpass.app.data.model.ExtraField
 import com.biometricpass.app.util.AppSignatureVerifier
 import com.biometricpass.app.util.AppSignatures
 import com.biometricpass.app.util.InstalledAppHelper
@@ -156,6 +157,13 @@ class PickerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun decryptPassword(entity: CredentialEntity, dek: SecretKey): String =
         app.repository.decryptPassword(entity, dek)
+
+    fun decryptExtraFields(entity: CredentialEntity, dek: SecretKey): List<ExtraField> =
+        try {
+            app.repository.decryptExtraFields(entity, dek)
+        } catch (_: Exception) {
+            emptyList()
+        }
 
     fun isSignatureTrustedForTarget(entity: CredentialEntity, targetPackage: String): Boolean {
         val cleanPkg = targetPackage.trim()
